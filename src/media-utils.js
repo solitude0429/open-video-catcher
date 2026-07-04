@@ -80,6 +80,47 @@
     return extensionFromPathname(parsed.pathname);
   }
 
+  function extensionKind(ext) {
+    const clean = String(ext || "").toLowerCase();
+    return DIRECT_MEDIA_EXTENSIONS.get(clean) || PLAYLIST_EXTENSIONS.get(clean) || SEGMENT_EXTENSIONS.get(clean) || "";
+  }
+
+  function filenameFromContentDisposition(value) {
+    const text = String(value || "");
+    if (!text) return "";
+    const filenameStar = text.match(/filename\*\s*=\s*([^;]+)/i);
+    if (filenameStar) {
+      const raw = filenameStar[1].trim().replace(/^"|"$/g, "");
+      const match = raw.match(/^(?:[A-Za-z0-9_-]+)?''(.+)$/);
+      const encoded = match ? match[1] : raw;
+      try { return decodeURIComponent(encoded); } catch (_error) { return encoded; }
+    }
+    const filename = text.match(/filename\s*=\s*("(?:[^"\\]|\\.)*"|[^;]+)/i);
+    if (!filename) return "";
+    return filename[1].trim().replace(/^"|"$/g, "").replace(/\"/g, '"');
+  }
+
+  function preferredExtensionForMime(mime, urlExt, mimeKind) {
+    const cleanMime = normalizeMime(mime);
+    const cleanExt = String(urlExt || "").toLowerCase();
+    const hinted = MIME_EXTENSION_HINTS.get(cleanMime) || "";
+    const extKind = extensionKind(cleanExt);
+    if (cleanExt && extKind && extKind === mimeKind) return cleanExt;
+    return hinted || (cleanExt && !extKind ? cleanExt : "");
+  }
+
+  function replaceOrAppendExtension(base, ext) {
+    const target = String(ext || "").toLowerCase();
+    if (!target) return base;
+    const lower = String(base || "").toLowerCase();
+    if (lower.endsWith(`.${target}`)) return base;
+    const existing = lower.match(/\.([a-z0-9]{2,5})$/);
+    if (existing) {
+      return `${base.slice(0, -existing[0].length)}.${target}`;
+    }
+    return `${base}.${target}`;
+  }
+
   function isMediaMime(mime) {
     return mime.startsWith("video/") || mime.startsWith("audio/");
   }
@@ -103,7 +144,7 @@
     if (mime) {
       const mimeKind = kindFromMime(mime);
       if (mimeKind) {
-        return { kind: mimeKind, ext: ext || MIME_EXTENSION_HINTS.get(mime) || "", mimeType: mime, protocol: parsed.protocol };
+        return { kind: mimeKind, ext: preferredExtensionForMime(mime, ext, mimeKind), mimeType: mime, protocol: parsed.protocol };
       }
     }
 
@@ -141,13 +182,13 @@
     try { return decodeURIComponent(segment); } catch (_error) { return segment; }
   }
 
-  function guessFilename(url, classification, fallbackTitle) {
+  function guessFilename(url, classification, fallbackTitle, contentDisposition) {
     const info = classification || classifyMediaUrl(url) || {};
     const parsed = parseUrl(url);
     const ext = info.ext || MIME_EXTENSION_HINTS.get(normalizeMime(info.mimeType)) || (info.kind === "hls-playlist" ? "m3u8" : info.kind === "dash-manifest" ? "mpd" : "");
-    let base = "";
+    let base = filenameFromContentDisposition(contentDisposition);
 
-    if (parsed && parsed.protocol !== "blob:") {
+    if (!base && parsed && parsed.protocol !== "blob:") {
       const last = parsed.pathname.split("/").filter(Boolean).pop() || "";
       base = decodePathSegment(last).replace(/[?#].*$/, "");
     }
@@ -157,7 +198,7 @@
       base = `${safeFilename(titlePart, SAFE_NAME_FALLBACK)}-${hashString(url).slice(0, 6)}`;
     }
 
-    if (ext && !base.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) base = `${base}.${ext}`;
+    base = replaceOrAppendExtension(base, ext);
     return safeFilename(base, `${SAFE_NAME_FALLBACK}.${ext || "bin"}`);
   }
 
@@ -339,8 +380,8 @@
 
     const url = data.url;
     const now = data.now || Date.now();
-    const downloadable = isNetworkProtocol(classification.protocol) && classification.kind !== "stream-segment";
-    const fileName = guessFilename(url, classification, data.pageTitle || data.label || data.qualityLabel);
+    const downloadable = isNetworkProtocol(classification.protocol) && (classification.kind === "video" || classification.kind === "audio");
+    const fileName = guessFilename(url, classification, data.pageTitle || data.label || data.qualityLabel, data.contentDisposition);
 
     return {
       id: hashString(`${url}|${classification.kind}`),
@@ -435,6 +476,7 @@
     curlCommand,
     displayQuality,
     extensionFromUrl,
+    filenameFromContentDisposition,
     ffmpegCommand,
     formatBytes,
     guessFilename,

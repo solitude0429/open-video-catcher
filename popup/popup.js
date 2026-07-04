@@ -45,8 +45,8 @@
 
   function hintForItem(item) {
     if (item.kind === "blob-media") return "blob: URL은 원본 주소가 아니라 브라우저 메모리 객체입니다. page-hook/network에서 원본 또는 playlist도 같이 잡히는지 확인하세요.";
-    if (item.kind === "hls-playlist") return item.analysis?.encrypted ? "암호화 표시가 있는 HLS입니다. URL/명령 복사는 제공하지만 복호화 우회는 하지 않습니다." : "HLS playlist입니다. ffmpeg 또는 yt-dlp 명령 복사를 사용할 수 있습니다.";
-    if (item.kind === "dash-manifest") return item.analysis?.protectedContent ? "ContentProtection이 있는 DASH manifest입니다. 보호 우회 없이 URL/명령만 제공합니다." : "DASH manifest입니다. 외부 도구 명령 복사를 사용할 수 있습니다.";
+    if (item.kind === "hls-playlist") return item.analysis?.encrypted ? "암호화 표시가 있는 HLS입니다. 브라우저 직접 저장은 영상 병합이 아니므로 ffmpeg/yt-dlp 명령을 사용하세요." : "HLS playlist입니다. 브라우저 직접 저장은 .m3u8 파일 저장일 뿐이라 비활성화했습니다. ffmpeg 또는 yt-dlp 명령을 사용하세요.";
+    if (item.kind === "dash-manifest") return item.analysis?.protectedContent ? "ContentProtection이 있는 DASH manifest입니다. 브라우저 직접 저장은 영상 병합이 아니므로 ffmpeg/yt-dlp 명령을 사용하세요." : "DASH manifest입니다. 브라우저 직접 저장은 .mpd 파일 저장일 뿐이라 비활성화했습니다. ffmpeg 또는 yt-dlp 명령을 사용하세요.";
     if (item.kind === "stream-segment") return "스트리밍 조각 파일입니다. playlist/manifest가 있으면 그쪽을 우선 사용하세요.";
     return "";
   }
@@ -124,23 +124,28 @@
       hintNode.hidden = !hint;
 
       const downloadButton = node.querySelector(".download");
-      downloadButton.disabled = !item.downloadable || item.kind === "stream-segment";
+      const canBrowserDownload = item.downloadable && (item.kind === "video" || item.kind === "audio");
+      downloadButton.disabled = !canBrowserDownload;
+      downloadButton.textContent = canBrowserDownload ? "파일 다운로드" : (item.kind === "hls-playlist" || item.kind === "dash-manifest" ? "명령 사용" : "다운로드 불가");
       downloadButton.addEventListener("click", async () => {
+        if (!canBrowserDownload) return;
         downloadButton.disabled = true;
         downloadButton.textContent = "요청 중…";
         const response = await sendRuntimeMessage({ type: "OVC_DOWNLOAD", tabId: activeTab.id, id: item.id });
         const payload = response.result || response;
         if (!payload.ok) {
           downloadButton.textContent = "실패";
+          hintNode.textContent = `다운로드 실패: ${payload.error || "브라우저 다운로드 API가 거부했습니다."}`;
+          hintNode.hidden = false;
           window.setTimeout(() => {
-            downloadButton.textContent = "다운로드";
-            downloadButton.disabled = !item.downloadable;
-          }, 1800);
+            downloadButton.textContent = "파일 다운로드";
+            downloadButton.disabled = false;
+          }, 2200);
           return;
         }
         downloadButton.textContent = "다운로드 시작";
         window.setTimeout(() => {
-          downloadButton.textContent = "다운로드";
+          downloadButton.textContent = "파일 다운로드";
           downloadButton.disabled = false;
         }, 1800);
       });

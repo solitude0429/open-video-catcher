@@ -20,6 +20,39 @@ test("classifies media by content-type even without extension", () => {
   assert.equal(result.ext, "mp4");
 });
 
+test("MIME type overrides misleading playlist-looking URL extension", () => {
+  const result = utils.classifyMediaUrl("https://cdn.example/video/master.m3u8?download=1", { contentType: "video/mp4" });
+  assert.equal(result.kind, "video");
+  assert.equal(result.ext, "mp4");
+  const item = utils.createMediaItem({ url: "https://cdn.example/video/master.m3u8?download=1", mimeType: "video/mp4" });
+  assert.equal(item.kind, "video");
+  assert.equal(item.fileName, "master.mp4");
+  assert.equal(item.downloadable, true);
+});
+
+test("HLS and DASH manifests are not advertised as direct browser video downloads", () => {
+  const hls = utils.createMediaItem({ url: "https://cdn.example/live/master.m3u8" });
+  const dash = utils.createMediaItem({ url: "https://cdn.example/live/manifest.mpd" });
+  assert.equal(hls.kind, "hls-playlist");
+  assert.equal(dash.kind, "dash-manifest");
+  assert.equal(hls.downloadable, false);
+  assert.equal(dash.downloadable, false);
+});
+
+test("Content-Disposition filename wins and is sanitized", () => {
+  const item = utils.createMediaItem({
+    url: "https://cdn.example/media?id=123",
+    mimeType: "video/mp4",
+    contentDisposition: 'attachment; filename="bad/name?.bin"'
+  });
+  assert.equal(item.fileName, "bad-name-.mp4");
+});
+
+test("RFC5987 Content-Disposition filename is decoded", () => {
+  const name = utils.filenameFromContentDisposition("attachment; filename*=UTF-8''%EC%98%81%EC%83%81.mp4");
+  assert.equal(name, "영상.mp4");
+});
+
 test("preserves signed URL tails for download while redacting display URL", () => {
   const item = utils.createMediaItem({
     url: "https://cdn.example/path/movie.mp4?Policy=secret&Signature=top#frag",
