@@ -8,6 +8,8 @@ CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최
 - 페이지의 `<video>`, `<audio>`, `<source>`, 직접 미디어 링크 감지
 - 감지 창이 열린 동안 브라우저 네트워크 요청에서 `mp4`, `webm`, `m4v`, `mov`, `mp3`, `m4a`, `m3u8`, `mpd` 등 감지
 - 감지 창이 열린 동안 페이지 내부 `fetch`, `XMLHttpRequest`, `URL.createObjectURL`, Performance resource entry hook으로 동적 플레이어 URL 추가 감지
+- page hook은 `scripting.executeScript(..., world: "MAIN")`로 먼저 주입하고, 실패 시 content script fallback을 사용
+- 빈 결과일 때 site access, content/main-world hook, page/network 후보 수를 팝업 진단으로 표시
 - HLS `.m3u8` playlist 자동 분석: master/media playlist, variant 품질, bandwidth, segment 수, 암호화 표시 감지
 - DASH `.mpd` manifest 분석: representation 수, 해상도/bitrate, ContentProtection 표시 감지
 - 팝업에서 감지된 항목 목록, MIME/크기/출처/품질/분석 결과 표시

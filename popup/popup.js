@@ -13,6 +13,7 @@
   let currentItems = [];
   let captureActive = false;
   let captureUntil = 0;
+  let diagnostics = null;
   let statusMessage = "감지 시작을 누르면 현재 탭을 일정 시간만 감지합니다.";
 
   function promisifyChrome(call) {
@@ -97,6 +98,25 @@
     window.setTimeout(() => { button.textContent = originalLabel; }, 1400);
   }
 
+  function diagnosticText() {
+    if (!diagnostics) return "";
+    const lines = [];
+    const host = diagnostics.hostPermissionGranted === true ? "허용" : diagnostics.hostPermissionGranted === false ? "미허용" : "확인불가";
+    lines.push(`진단: site access=${host}, content=${diagnostics.contentInjectionOk ? "ok" : "fail"}/${diagnostics.contentFrames || 0}, main hook=${diagnostics.mainWorldHookOk ? "ok" : "fail"}/${diagnostics.mainWorldHookFrames || 0}, fallback hook=${diagnostics.contentFallbackHookOk ? "ok" : "fail"}`);
+    lines.push(`후보: page ${diagnostics.pageCandidatesSeen || 0}개→${diagnostics.pageCandidatesRecorded || 0}개, network ${diagnostics.networkSeen || 0}개→${diagnostics.networkRecorded || 0}개, 제외 ${diagnostics.networkDiscarded || 0}개`);
+    if (diagnostics.warning) lines.push(`경고: ${diagnostics.warning}`);
+    if (diagnostics.hostPermissionGranted === false) {
+      lines.push("Firefox에서 이 확장의 사이트 데이터 접근 권한이 꺼져 있으면 CDN/미디어 네트워크 요청이 보이지 않습니다. 퍼즐 아이콘/확장 관리에서 이 사이트 또는 모든 사이트 접근을 허용하세요.");
+    } else if ((diagnostics.networkSeen || 0) === 0 && (diagnostics.pageCandidatesSeen || 0) === 0) {
+      lines.push("현재 탭에서 확장에 노출된 미디어 후보가 없습니다. 감지 시작 후 재생/seek를 했는데도 이 상태면 사이트가 DRM/EME, 폐쇄형 iframe, service-worker/cache, 또는 확장 권한 밖의 경로로 재생 중일 가능성이 큽니다.");
+    } else if ((diagnostics.networkSeen || 0) > 0 && (diagnostics.networkRecorded || 0) === 0) {
+      lines.push("네트워크 요청은 보였지만 미디어/playlist로 분류되지 않았습니다. URL에 확장자가 없고 MIME도 일반값이면 분류 규칙을 더 넓혀야 합니다.");
+    }
+    if (diagnostics.lastNetworkUrl) lines.push(`마지막 network: ${diagnostics.lastNetworkUrl}`);
+    if (diagnostics.lastPageUrl) lines.push(`마지막 page: ${diagnostics.lastPageUrl}`);
+    return lines.join("\n");
+  }
+
   function emptyText() {
     if (captureActive) {
       return "아직 감지된 미디어가 없습니다. 이 상태에서 영상을 재생하거나 seek 해보세요. 이미 재생 중이었다면 페이지를 새로고침한 뒤 감지 시작 → 재생 순서가 더 잘 잡힙니다.";
@@ -123,6 +143,13 @@
       empty.className = "empty";
       empty.textContent = emptyText();
       content.append(empty);
+      const diag = diagnosticText();
+      if (diag) {
+        const pre = document.createElement("pre");
+        pre.className = "diagnostics";
+        pre.textContent = diag;
+        content.append(pre);
+      }
       return;
     }
 
@@ -212,6 +239,7 @@
     const response = await sendRuntimeMessage({ type: "OVC_GET_TAB_MEDIA", tabId: activeTab.id });
     const payload = response.result || response;
     currentItems = payload.ok ? payload.items || [] : [];
+    diagnostics = payload.diagnostics || null;
     captureUntil = payload.captureUntil || 0;
     captureActive = Boolean(payload.captureActive);
     render();
@@ -234,6 +262,7 @@
       return;
     }
     currentItems = payload.items || [];
+    diagnostics = payload.diagnostics || null;
     captureUntil = payload.captureUntil || 0;
     captureActive = true;
     statusMessage = payload.warning
@@ -247,6 +276,7 @@
     if (!activeTab?.id) return;
     await sendRuntimeMessage({ type: "OVC_CLEAR_TAB", tabId: activeTab.id });
     currentItems = [];
+    diagnostics = null;
     captureUntil = 0;
     captureActive = false;
     statusMessage = "목록을 지웠습니다. 새로 감지하려면 감지 시작을 누르세요.";
