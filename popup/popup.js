@@ -148,7 +148,7 @@
     const lines = [];
     const host = diagnostics.hostPermissionGranted === true ? "허용" : diagnostics.hostPermissionGranted === false ? "미허용" : "확인불가";
     lines.push(`진단: site access=${host}, content=${diagnostics.contentInjectionOk ? "ok" : "fail"}/${diagnostics.contentFrames || 0}, main hook=${diagnostics.mainWorldHookOk ? "ok" : "fail"}/${diagnostics.mainWorldHookFrames || 0}, fallback hook=${diagnostics.contentFallbackHookOk ? "ok" : "fail"}`);
-    lines.push(`후보: page ${diagnostics.pageCandidatesSeen || 0}개→${diagnostics.pageCandidatesRecorded || 0}개, network ${diagnostics.networkSeen || 0}개→${diagnostics.networkRecorded || 0}개, 제외 ${diagnostics.networkDiscarded || 0}개`);
+    lines.push(`후보: page ${diagnostics.pageCandidatesSeen || 0}개→${diagnostics.pageCandidatesRecorded || 0}개, network ${diagnostics.networkSeen || 0}개→${diagnostics.networkRecorded || 0}개, 제외 ${(diagnostics.networkDiscarded || 0) + (diagnostics.pageCandidatesDiscarded || 0)}개, sniff ${diagnostics.sniffAttempts || 0}개→${diagnostics.sniffRecorded || 0}개`);
     if (diagnostics.warning) lines.push(`경고: ${diagnostics.warning}`);
     if (diagnostics.hostPermissionGranted === false) {
       lines.push("Firefox에서 이 확장의 사이트 데이터 접근 권한이 꺼져 있으면 CDN/미디어 네트워크 요청이 보이지 않습니다. 퍼즐 아이콘/확장 관리에서 이 사이트 또는 모든 사이트 접근을 허용하세요.");
@@ -162,7 +162,8 @@
     return lines.join("\n");
   }
 
-  function emptyText() {
+  function emptyText(hiddenSegmentCount = 0) {
+    if (hiddenSegmentCount > 0) return `${hiddenSegmentCount}개 조각 파일만 감지되었습니다. '조각 파일 숨김'을 끄면 볼 수 있습니다. 원본 playlist가 안 잡혔으면 다시 감지 → 재생/seek를 시도하세요.`;
     if (captureActive) {
       return "아직 감지된 미디어가 없습니다. 이 상태에서 영상을 재생하거나 seek 해보세요. 이미 재생 중이었다면 페이지를 새로고침한 뒤 감지 시작 → 재생 순서가 더 잘 잡힙니다.";
     }
@@ -180,13 +181,14 @@
     captureActive = Boolean(captureUntil && Date.now() <= captureUntil);
     updateNotice();
     const visible = hideSegments.checked ? currentItems.filter((item) => item.kind !== "stream-segment") : currentItems;
-    countBadge.textContent = String(visible.length);
+    const hiddenSegmentCount = hideSegments.checked ? currentItems.length - visible.length : 0;
+    countBadge.textContent = hiddenSegmentCount > 0 ? `${visible.length}+${hiddenSegmentCount}` : String(visible.length);
     content.innerHTML = "";
 
     if (visible.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = emptyText();
+      empty.textContent = emptyText(hiddenSegmentCount);
       content.append(empty);
       const diag = diagnosticText();
       if (diag) {

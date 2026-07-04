@@ -39,6 +39,9 @@
   ]);
 
   const SAFE_NAME_FALLBACK = "media";
+  const SNIFFABLE_REQUEST_TYPES = new Set(["media", "video", "audio", "source", "fetch", "xmlhttprequest", "object", "other", ""]);
+  const GENERIC_SNIFFABLE_MIME = /^(|application\/octet-stream|binary\/octet-stream|application\/x-binary|text\/plain)$/i;
+  const MEDIA_URL_HINT_PATTERN = /(?:^|[/?&._=-])(m3u8|mpd|hls|dash|manifest|playlist|master|chunklist|videoplayback|video|audio|media|stream|playback|segment|fragment|frag|fmp4|m4s|init)(?:[/?&._=-]|$)/i;
 
   function normalizeMime(value) {
     if (!value || typeof value !== "string") return "";
@@ -133,6 +136,52 @@
     return "";
   }
 
+  function bytesView(input) {
+    if (!input) return null;
+    if (input instanceof Uint8Array) return input;
+    if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    if (input instanceof ArrayBuffer) return new Uint8Array(input);
+    if (Array.isArray(input)) return Uint8Array.from(input);
+    return null;
+  }
+
+  function sniffMediaInfo(url, options) {
+    const opts = options || {};
+    const mime = normalizeMime(opts.mimeType || opts.contentType || "");
+    const mimeKind = kindFromMime(mime);
+    if (mimeKind) {
+      const ext = preferredExtensionForMime(mime, extensionFromUrl(url), mimeKind) || (mimeKind === "hls-playlist" ? "m3u8" : mimeKind === "dash-manifest" ? "mpd" : "");
+      return { kind: mimeKind, ext, mimeType: mime };
+    }
+
+    const text = String(opts.sniffedText || opts.text || "").replace(/^\uFEFF/, "").trimStart();
+    if (text.startsWith("#EXTM3U")) return { kind: "hls-playlist", ext: "m3u8", mimeType: "application/vnd.apple.mpegurl" };
+    if (/<MPD\b/i.test(text.slice(0, 8192))) return { kind: "dash-manifest", ext: "mpd", mimeType: "application/dash+xml" };
+
+    const bytes = bytesView(opts.sniffedBytes || opts.bytes);
+    if (bytes && bytes.length >= 12) {
+      const brand = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+      if (brand === "ftyp") return { kind: "video", ext: "mp4", mimeType: "video/mp4" };
+      if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return { kind: "video", ext: "webm", mimeType: "video/webm" };
+    }
+
+    return null;
+  }
+
+  function shouldSniffMediaUrl(url, options) {
+    const opts = options || {};
+    const parsed = parseUrl(url, opts.baseUrl);
+    if (!parsed || !isNetworkProtocol(parsed.protocol)) return false;
+    const ext = extensionFromPathname(parsed.pathname);
+    if (extensionKind(ext)) return false;
+    const requestType = String(opts.requestType || "").toLowerCase();
+    if (!SNIFFABLE_REQUEST_TYPES.has(requestType)) return false;
+    const mime = normalizeMime(opts.mimeType || opts.contentType || "");
+    if (mime && kindFromMime(mime)) return false;
+    if (mime && !GENERIC_SNIFFABLE_MIME.test(mime)) return false;
+    return requestType === "media" || MEDIA_URL_HINT_PATTERN.test(`${parsed.pathname}${parsed.search}`.toLowerCase());
+  }
+
   function classifyMediaUrl(url, options) {
     const opts = options || {};
     const parsed = parseUrl(url, opts.baseUrl);
@@ -151,6 +200,9 @@
     if (PLAYLIST_EXTENSIONS.has(ext)) return { kind: PLAYLIST_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
     if (DIRECT_MEDIA_EXTENSIONS.has(ext)) return { kind: DIRECT_MEDIA_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
     if (SEGMENT_EXTENSIONS.has(ext)) return { kind: SEGMENT_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
+
+    const sniffed = sniffMediaInfo(parsed.href, opts);
+    if (sniffed) return { kind: sniffed.kind, ext: sniffed.ext, mimeType: sniffed.mimeType, protocol: parsed.protocol };
 
     if (parsed.protocol === "blob:" && opts.fromDom) return { kind: "blob-media", ext: "", mimeType: mime, protocol: parsed.protocol };
 
@@ -493,6 +545,8 @@
     redactUrl,
     resolveUrl,
     safeFilename,
+    shouldSniffMediaUrl,
+    sniffMediaInfo,
     ytDlpCommand
   };
 });

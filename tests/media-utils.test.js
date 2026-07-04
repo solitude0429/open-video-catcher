@@ -20,6 +20,38 @@ test("classifies media by content-type even without extension", () => {
   assert.equal(result.ext, "mp4");
 });
 
+test("sniffs extensionless HLS and DASH responses", () => {
+  const hls = utils.createMediaItem({
+    url: "https://cdn.example/api/playback?id=1",
+    sniffedText: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nchunklist"
+  });
+  assert.equal(hls.kind, "hls-playlist");
+  assert.equal(hls.ext, "m3u8");
+
+  const dash = utils.createMediaItem({
+    url: "https://cdn.example/manifest?id=2",
+    sniffedText: "<?xml version=\"1.0\"?><MPD><Period/></MPD>"
+  });
+  assert.equal(dash.kind, "dash-manifest");
+  assert.equal(dash.ext, "mpd");
+});
+
+test("sniffs extensionless MP4 init bytes", () => {
+  const bytes = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+  const item = utils.createMediaItem({
+    url: "https://cdn.example/range/segment?id=3",
+    mimeType: "application/octet-stream",
+    sniffedBytes: bytes
+  });
+  assert.equal(item.kind, "video");
+  assert.equal(item.ext, "mp4");
+});
+
+test("recognizes extensionless media URLs worth sniffing during manual capture", () => {
+  assert.equal(utils.shouldSniffMediaUrl("https://cdn.example/hls/master?id=1", { requestType: "xmlhttprequest" }), true);
+  assert.equal(utils.shouldSniffMediaUrl("https://cdn.example/assets/app.js", { requestType: "script" }), false);
+});
+
 test("MIME type overrides misleading playlist-looking URL extension", () => {
   const result = utils.classifyMediaUrl("https://cdn.example/video/master.m3u8?download=1", { contentType: "video/mp4" });
   assert.equal(result.kind, "video");

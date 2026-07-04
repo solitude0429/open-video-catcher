@@ -43,30 +43,38 @@
     try { return new URL(rawUrl, document.baseURI).href; } catch (_error) { return ""; }
   }
 
-  function candidateFromUrl(rawUrl, label, mimeType, source, requestType) {
+  function candidateFromUrl(rawUrl, label, mimeType, source, requestType, options) {
+    const opts = options || {};
     const url = resolveUrl(rawUrl);
     if (!url) return null;
-    const item = utils.createMediaItem({
+    const base = {
       url,
-      source: source || "dom",
-      fromDom: true,
-      requestType: requestType || "",
+      label: label || "",
       mimeType: mimeType || "",
-      pageUrl: location.href,
-      pageTitle: document.title,
-      label: label || ""
-    });
-    if (!item) return null;
-    return {
-      url: item.url,
-      displayUrl: item.displayUrl,
-      label: item.label,
-      mimeType: item.mimeType,
       pageUrl: location.href,
       pageTitle: document.title,
       source: source || "dom",
       requestType: requestType || ""
     };
+    const item = utils.createMediaItem(Object.assign({}, base, { fromDom: true }));
+    if (item) {
+      return {
+        url: item.url,
+        displayUrl: item.displayUrl,
+        label: item.label,
+        mimeType: item.mimeType,
+        pageUrl: location.href,
+        pageTitle: document.title,
+        source: source || "dom",
+        requestType: requestType || ""
+      };
+    }
+    if (!opts.keepUnclassified && !utils.shouldSniffMediaUrl(url, { requestType, mimeType })) return null;
+    return Object.assign({}, base, {
+      displayUrl: utils.redactUrl(url),
+      sniff: true,
+      candidateHint: "unclassified"
+    });
   }
 
   function collectFromMediaElement(element, out) {
@@ -101,8 +109,9 @@
     try {
       for (const entry of performance.getEntriesByType("resource")) {
         const initiator = String(entry.initiatorType || "").toLowerCase();
-        if (!MEDIA_INITIATORS.has(initiator) && !utils.extensionFromUrl(entry.name)) continue;
-        const candidate = candidateFromUrl(entry.name, initiator || "resource", "", `performance-${initiator || "resource"}`, initiator);
+        const shouldKeep = MEDIA_INITIATORS.has(initiator) || Boolean(utils.extensionFromUrl(entry.name)) || utils.shouldSniffMediaUrl(entry.name, { requestType: initiator });
+        if (!shouldKeep) continue;
+        const candidate = candidateFromUrl(entry.name, initiator || "resource", "", `performance-${initiator || "resource"}`, initiator, { keepUnclassified: true });
         if (candidate) candidates.push(candidate);
       }
     } catch (_error) {}
@@ -166,7 +175,7 @@
   window.addEventListener("__OVC_MEDIA_CANDIDATE", (event) => {
     if (!isCaptureActive()) return;
     const detail = event.detail || {};
-    const candidate = candidateFromUrl(detail.url, detail.label || detail.source || "page", detail.mimeType || "", detail.source || "page-hook", detail.requestType || "");
+    const candidate = candidateFromUrl(detail.url, detail.label || detail.source || "page", detail.mimeType || "", detail.source || "page-hook", detail.requestType || "", { keepUnclassified: Boolean(detail.force) || utils.shouldSniffMediaUrl(detail.url, { requestType: detail.requestType || "", mimeType: detail.mimeType || "" }) });
     if (candidate) sendCandidates([candidate]);
   });
 
