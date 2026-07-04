@@ -4,9 +4,10 @@ CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최
 
 ## 기능
 
+- **감지 시작** 버튼을 누른 경우에만 현재 탭을 일정 시간 감지
 - 페이지의 `<video>`, `<audio>`, `<source>`, 직접 미디어 링크 감지
-- 브라우저 네트워크 요청에서 `mp4`, `webm`, `m4v`, `mov`, `mp3`, `m4a`, `m3u8`, `mpd` 등 감지
-- 페이지 내부 `fetch`, `XMLHttpRequest`, `URL.createObjectURL`, Performance resource entry hook으로 동적 플레이어 URL 추가 감지
+- 감지 창이 열린 동안 브라우저 네트워크 요청에서 `mp4`, `webm`, `m4v`, `mov`, `mp3`, `m4a`, `m3u8`, `mpd` 등 감지
+- 감지 창이 열린 동안 페이지 내부 `fetch`, `XMLHttpRequest`, `URL.createObjectURL`, Performance resource entry hook으로 동적 플레이어 URL 추가 감지
 - HLS `.m3u8` playlist 자동 분석: master/media playlist, variant 품질, bandwidth, segment 수, 암호화 표시 감지
 - DASH `.mpd` manifest 분석: representation 수, 해상도/bitrate, ContentProtection 표시 감지
 - 팝업에서 감지된 항목 목록, MIME/크기/출처/품질/분석 결과 표시
@@ -20,8 +21,10 @@ CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최
 
 ## 동작 범위
 
-다운로더로서 브라우저 확장이 할 수 있는 감지 경로는 최대한 켰습니다. 이 프로젝트는 현재 브라우저 세션이 실제로 로드하는 미디어 URL과 playlist를 찾아내는 방식입니다.
+다운로더로서 브라우저 확장이 할 수 있는 감지 경로는 최대한 켰습니다. 이 프로젝트는 현재 브라우저 세션이 실제로 로드하는 미디어 URL과 playlist를 찾아내는 방식입니다. v0.2.3부터는 항상 감시하지 않고, 사용자가 팝업에서 **감지 시작**을 누른 현재 탭만 짧은 시간 감지합니다.
 
+- 정적 `<video src>`/`<source src>`/직접 링크는 재생 전에도 감지될 수 있습니다.
+- HLS/DASH/MSE 플레이어는 실제 playlist·segment URL을 재생/seek 시점에 만드는 경우가 많아, **감지 시작 후 재생 또는 seek**가 필요할 수 있습니다.
 - `blob:` URL은 원본 주소가 아니라 브라우저 메모리 객체입니다. page-hook이 `fetch`/`XHR`/network 쪽 원본 URL을 같이 잡도록 보강했습니다.
 - HLS/DASH는 playlist/manifest를 분석하고 `ffmpeg`/`yt-dlp` 명령을 복사할 수 있습니다. 브라우저 다운로드 버튼은 `.m3u8`/`.mpd`를 최종 영상 파일처럼 저장하지 않도록 비활성화합니다.
 - 암호화/ContentProtection 표시는 분석 결과에 보여줍니다.
@@ -44,10 +47,11 @@ CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최
 ## 사용법
 
 1. 다운로드하려는 페이지를 엽니다.
-2. 영상을 재생합니다. 많은 사이트는 재생 전까지 실제 미디어 URL을 요청하지 않습니다.
-3. 툴바의 **Open Video Catcher** 아이콘을 누릅니다.
-4. 목록에서 `다운로드`, `URL 복사`, `ffmpeg`, `curl`, `yt-dlp`, `playlist 분석`을 사용합니다.
-5. 항목이 없으면 **다시 스캔**을 누르거나 페이지를 새로고침 후 다시 재생합니다.
+2. 툴바의 **Open Video Catcher** 아이콘을 누릅니다.
+3. **감지 시작**을 누릅니다.
+4. 정적 파일/링크는 바로 잡힐 수 있습니다. 플레이어가 URL을 늦게 만드는 사이트는 감지 시작 후 영상을 재생하거나 seek 합니다.
+5. 목록에서 `파일 다운로드`, `URL 복사`, `ffmpeg`, `curl`, `yt-dlp`, `playlist 분석`을 사용합니다.
+6. 항목이 없으면 페이지를 새로고침한 뒤 **감지 시작 → 재생/seek** 순서로 다시 시도합니다.
 
 ## 개발 명령
 
@@ -82,10 +86,12 @@ AMO unlisted signing과 GitHub Pages 업데이트 배포는 `.github/workflows/s
 
 ## 권한 설명
 
-- `webRequest`: 현재 탭에서 로드되는 미디어/playlist 요청 감지. 요청/응답 URL과 MIME/크기/파일명 헤더를 확장 내부 목록에만 사용합니다.
+- `activeTab`: 사용자가 확장 아이콘/팝업을 연 현재 탭에 수동 감지 스크립트를 주입
+- `scripting`: **감지 시작**을 누른 순간에만 content/page hook 스크립트 주입
+- `webRequest`: 감지 창이 열린 현재 탭에서 로드되는 미디어/playlist 요청 감지. 요청/응답 URL과 MIME/크기/파일명 헤더를 확장 내부 목록에만 사용합니다.
 - `downloads`: 사용자가 직접 누른 일반 HTTP(S) 비디오/오디오 파일 저장
 - `tabs`: 현재 활성 탭 확인 및 해당 탭의 감지 목록 표시
-- `<all_urls>`: 여러 사이트에서 동작하는 범용 다운로더라 필요합니다. 특정 사이트 전용으로 줄이고 싶다면 `manifest.json`의 `host_permissions`와 `content_scripts.matches`를 해당 도메인으로 바꾸면 됩니다.
+- `<all_urls>`: 여러 사이트의 CDN/미디어 도메인까지 감지하는 범용 다운로더라 필요합니다. 특정 사이트 전용으로 줄이고 싶다면 `manifest.json`의 `host_permissions`를 해당 도메인으로 바꾸면 됩니다.
 - `web_accessible_resources`: 페이지 컨텍스트의 `fetch`/`XHR`를 관찰하는 `page/page-hook.js`를 주입하기 위해 필요합니다.
 
 ## 데이터 처리
@@ -93,4 +99,5 @@ AMO unlisted signing과 GitHub Pages 업데이트 배포는 `.github/workflows/s
 - Firefox manifest의 `data_collection_permissions.required`는 `none`입니다.
 - 쿠키 권한, debugger 권한, request rewriting 권한은 사용하지 않습니다.
 - 감지된 URL은 외부 서버로 보내지 않고 현재 브라우저 확장 메모리 안에서만 팝업 표시/다운로드/복사에 사용합니다.
+- URL 수집은 사용자가 **감지 시작**을 누른 현재 탭의 감지 창 동안만 수행합니다.
 - CDN 서명/토큰 쿼리스트링은 화면 표시에서 마스킹하지만, 사용자가 다운로드/복사 버튼을 누를 때 실제 URL은 보존합니다.

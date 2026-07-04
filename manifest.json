@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Open Video Catcher",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "CocoCut-like video/audio detector with DOM, network, page-hook, HLS/DASH analysis, and download helpers for accessible media.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -11,7 +11,9 @@
     "128": "icons/icon-128.png"
   },
   "permissions": [
+    "activeTab",
     "downloads",
+    "scripting",
     "tabs",
     "webRequest"
   ],
@@ -31,19 +33,6 @@
     "default_popup": "popup/popup.html",
     "default_title": "Open Video Catcher"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "src/media-utils.js",
-        "content/content-script.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true
-    }
-  ],
   "web_accessible_resources": [
     {
       "resources": [
