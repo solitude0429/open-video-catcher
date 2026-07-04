@@ -1,0 +1,18 @@
+{
+  "addons": {
+    "open-video-catcher@solitude0429.github.io": {
+      "updates": [
+        {
+          "version": "0.2.2",
+          "update_link": "https://solitude0429.github.io/open-video-catcher/open-video-catcher-firefox.xpi",
+          "update_hash": "sha256:12b50bf6e5dd51c575b1d81bdfa74f99324ab57e519710e11748ce106e34e53c",
+          "applications": {
+            "gecko": {
+              "strict_min_version": "140.0"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
