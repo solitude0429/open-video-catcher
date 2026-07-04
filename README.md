@@ -1,0 +1,88 @@
+# Open Video Catcher
+
+CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최대한 많이 감지하고 다운로드/외부 도구 명령을 제공하는 Manifest V3 브라우저 확장 프로그램입니다.
+
+## 기능
+
+- 페이지의 `<video>`, `<audio>`, `<source>`, 직접 미디어 링크 감지
+- 브라우저 네트워크 요청에서 `mp4`, `webm`, `m4v`, `mov`, `mp3`, `m4a`, `m3u8`, `mpd` 등 감지
+- 페이지 내부 `fetch`, `XMLHttpRequest`, `URL.createObjectURL`, Performance resource entry hook으로 동적 플레이어 URL 추가 감지
+- HLS `.m3u8` playlist 자동 분석: master/media playlist, variant 품질, bandwidth, segment 수, 암호화 표시 감지
+- DASH `.mpd` manifest 분석: representation 수, 해상도/bitrate, ContentProtection 표시 감지
+- 팝업에서 감지된 항목 목록, MIME/크기/출처/품질/분석 결과 표시
+- 일반 HTTP(S) 미디어 다운로드
+- `URL`, `ffmpeg`, `curl`, `yt-dlp` 명령 복사
+- 민감한 CDN 쿼리스트링은 화면 표시에서 `?…`로 마스킹하면서 실제 다운로드 URL은 보존
+- 아이콘 포함: 16/32/48/96/128 PNG + SVG 원본
+- 외부 서버/텔레메트리 없음
+
+## 동작 범위
+
+다운로더로서 브라우저 확장이 할 수 있는 감지 경로는 최대한 켰습니다. 이 프로젝트는 현재 브라우저 세션이 실제로 로드하는 미디어 URL과 playlist를 찾아내는 방식입니다.
+
+- `blob:` URL은 원본 주소가 아니라 브라우저 메모리 객체입니다. page-hook이 `fetch`/`XHR`/network 쪽 원본 URL을 같이 잡도록 보강했습니다.
+- HLS/DASH는 playlist/manifest를 분석하고 `ffmpeg`/`yt-dlp` 명령을 복사할 수 있습니다.
+- 암호화/ContentProtection 표시는 분석 결과에 보여줍니다.
+
+## 설치: Chrome / Edge
+
+1. GitHub Release 또는 빌드 결과의 `open-video-catcher-chrome-edge.zip`을 압축 해제합니다.
+2. `chrome://extensions` 또는 `edge://extensions`로 이동합니다.
+3. **개발자 모드**를 켭니다.
+4. **압축해제된 확장 프로그램 로드**를 누르고 압축 해제한 폴더를 선택합니다.
+
+## 설치: Firefox 임시 로드
+
+1. GitHub Release 또는 빌드 결과의 `open-video-catcher-firefox.zip`을 압축 해제합니다.
+2. `about:debugging#/runtime/this-firefox`로 이동합니다.
+3. **임시 부가 기능 로드**를 누르고 압축 해제한 폴더의 `manifest.json`을 선택합니다.
+
+정식 Firefox 배포/업데이트 채널은 `docs/AMO_SIGNING.md`를 따릅니다.
+
+## 사용법
+
+1. 다운로드하려는 페이지를 엽니다.
+2. 영상을 재생합니다. 많은 사이트는 재생 전까지 실제 미디어 URL을 요청하지 않습니다.
+3. 툴바의 **Open Video Catcher** 아이콘을 누릅니다.
+4. 목록에서 `다운로드`, `URL 복사`, `ffmpeg`, `curl`, `yt-dlp`, `playlist 분석`을 사용합니다.
+5. 항목이 없으면 **다시 스캔**을 누르거나 페이지를 새로고침 후 다시 재생합니다.
+
+## 개발 명령
+
+```bash
+npm ci
+npm run verify
+```
+
+개별 명령:
+
+```bash
+npm run validate:manifest
+npm run lint
+npm test
+npm run build
+npm run lint:webext
+npm audit --audit-level=moderate
+```
+
+빌드 결과는 `dist/open-video-catcher-chrome-edge.zip`과 `dist/open-video-catcher-firefox.zip`에 생성됩니다.
+
+## Firefox 업데이트 채널
+
+Firefox manifest에는 안정적인 add-on ID와 self-hosted update URL이 들어 있습니다.
+
+```text
+open-video-catcher@solitude0429.github.io
+https://solitude0429.github.io/open-video-catcher/updates.json
+```
+
+AMO unlisted signing과 GitHub Pages 업데이트 배포는 `.github/workflows/sign-firefox.yml`에서 처리합니다. AMO 계정 등록과 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` repository secrets 추가는 사용자가 직접 해야 합니다.
+
+## 권한 설명
+
+- `webRequest`: 현재 탭에서 로드되는 미디어/playlist 요청 감지
+- `downloads`: 사용자가 누른 항목 저장
+- `tabs`: 현재 활성 탭 확인
+- `storage`: 향후 설정 저장용으로 예약되어 있으나 외부 전송은 없음
+- `<all_urls>`: 여러 사이트에서 동작하는 범용 다운로더라 필요합니다. 특정 사이트 전용으로 줄이고 싶다면 `manifest.json`의 `host_permissions`와 `content_scripts.matches`를 해당 도메인으로 바꾸면 됩니다.
+- `web_accessible_resources`: 페이지 컨텍스트의 `fetch`/`XHR`를 관찰하는 `page/page-hook.js`를 주입하기 위해 필요합니다.

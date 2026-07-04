@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Video Catcher</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <h1>Open Video Catcher</h1>
+      <p>DOM · 네트워크 · fetch/XHR · HLS/DASH 분석</p>
+    </div>
+    <span id="countBadge" class="count">0</span>
+  </header>
+
+  <section class="notice">
+    감지 강화 모드: 페이지 내부 fetch/XHR, MediaSource blob, playlist variant까지 추적합니다.
+  </section>
+
+  <nav class="toolbar" aria-label="actions">
+    <button id="refreshButton" type="button">다시 스캔</button>
+    <button id="clearButton" type="button" class="secondary">목록 지우기</button>
+    <label class="toggle"><input id="hideSegments" type="checkbox" checked> 조각 파일 숨김</label>
+  </nav>
+
+  <main id="content">
+    <div class="empty">페이지에서 영상을 재생한 뒤 다시 열어보세요.</div>
+  </main>
+
+  <template id="itemTemplate">
+    <article class="item">
+      <div class="itemTop">
+        <strong class="filename"></strong>
+        <span class="kind"></span>
+      </div>
+      <div class="quality"></div>
+      <div class="meta"></div>
+      <div class="url"></div>
+      <div class="analysis"></div>
+      <p class="hint"></p>
+      <div class="buttons">
+        <button class="download" type="button">다운로드</button>
+        <button class="analyze" type="button">playlist 분석</button>
+        <button class="copy" type="button">URL 복사</button>
+        <button class="copyFfmpeg" type="button">ffmpeg</button>
+        <button class="copyCurl" type="button">curl</button>
+        <button class="copyYtdlp" type="button">yt-dlp</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="../src/media-utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

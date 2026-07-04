@@ -1,0 +1,37 @@
+name: GitHub Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          NOTES=/tmp/release-notes.md
+          cat > "$NOTES" <<'MD'
+          ## Open Video Catcher
+
+          - Chrome/Edge unsigned development ZIP
+          - Firefox unsigned development ZIP
+          - Firefox signed XPI is produced by the protected `Sign Firefox and Publish Update Channel` workflow after AMO secrets are configured.
+          MD
+          gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file "$NOTES"
+          gh release upload "$VERSION" dist/open-video-catcher-chrome-edge.zip dist/open-video-catcher-firefox.zip --clobber

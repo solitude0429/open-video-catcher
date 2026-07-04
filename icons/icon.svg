@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Open Video Catcher icon">
+  <defs>
+    <linearGradient id="bg" x1="14" y1="8" x2="116" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="0.58" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)" filter="url(#shadow)"/>
+  <path d="M43 31v43l36-21.5L43 31Z" fill="#fff" opacity="0.97"/>
+  <path d="M78 73v24m0 0L61 80m17 17 17-17M51 106h54" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="29" cy="94" r="8" fill="#fcd34d"/>
+</svg>

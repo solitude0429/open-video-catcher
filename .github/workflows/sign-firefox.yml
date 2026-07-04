@@ -1,0 +1,62 @@
+name: Sign Firefox and Publish Update Channel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: firefox-pages-release
+  cancel-in-progress: false
+
+jobs:
+  sign-and-publish:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint:webext
+      - name: Sign unlisted Firefox XPI with AMO
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          test -n "$WEB_EXT_API_KEY" || { echo "Missing AMO_JWT_ISSUER"; exit 1; }
+          test -n "$WEB_EXT_API_SECRET" || { echo "Missing AMO_JWT_SECRET"; exit 1; }
+          mkdir -p dist/amo
+          npx --yes web-ext@latest sign             --source-dir dist/build/firefox             --channel unlisted             --artifacts-dir dist/amo             --api-key "$WEB_EXT_API_KEY"             --api-secret "$WEB_EXT_API_SECRET"
+          XPI="$(find dist/amo -maxdepth 1 -type f -name '*.xpi' | head -1)"
+          test -n "$XPI" || { echo "Signed XPI not produced"; exit 1; }
+          cp "$XPI" dist/amo/open-video-catcher-firefox.xpi
+          unzip -t dist/amo/open-video-catcher-firefox.xpi
+      - name: Generate self-hosted update manifest
+        run: |
+          XPI_PATH=dist/amo/open-video-catcher-firefox.xpi           UPDATE_LINK=https://solitude0429.github.io/open-video-catcher/open-video-catcher-firefox.xpi           UPDATE_MANIFEST_PATH=public/updates.json           node scripts/generate-update-manifest.js
+          cp dist/amo/open-video-catcher-firefox.xpi public/open-video-catcher-firefox.xpi
+          cp dist/open-video-catcher-chrome-edge.zip public/open-video-catcher-chrome-edge.zip
+          cp dist/open-video-catcher-firefox.zip public/open-video-catcher-firefox-unsigned.zip
+          sha256sum public/*
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firefox-signed-update-channel
+          path: |
+            public/updates.json
+            public/open-video-catcher-firefox.xpi
