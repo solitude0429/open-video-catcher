@@ -37,7 +37,7 @@ CocoCut처럼 현재 탭에서 로드되는 비디오/오디오 리소스를 최
 2. `about:debugging#/runtime/this-firefox`로 이동합니다.
 3. **임시 부가 기능 로드**를 누르고 압축 해제한 폴더의 `manifest.json`을 선택합니다.
 
-정식 Firefox 배포/업데이트 채널은 `docs/AMO_SIGNING.md`를 따릅니다.
+정식 Firefox 배포/업데이트 채널은 `docs/AMO_SIGNING.md`를 따릅니다. Firefox ESR/Release 140 이상에서 설치되도록 manifest 호환 버전을 맞춥니다.
 
 ## 사용법
 

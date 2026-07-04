@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Open Video Catcher",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CocoCut-like video/audio detector with DOM, network, page-hook, HLS/DASH analysis, and download helpers for accessible media.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -58,7 +58,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "open-video-catcher@solitude0429.github.io",
-      "strict_min_version": "142.0",
+      "strict_min_version": "140.0",
       "update_url": "https://solitude0429.github.io/open-video-catcher/updates.json",
       "data_collection_permissions": {
         "required": [
