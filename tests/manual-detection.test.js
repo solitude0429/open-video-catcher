@@ -64,3 +64,18 @@ test("popup renders empty-state diagnostics", () => {
   assert.match(source, /networkSeen/);
   assert.match(source, /className = "diagnostics"/);
 });
+
+test("manual capture forwards extensionless page candidates for background sniffing", () => {
+  const source = fs.readFileSync(path.join(root, "content", "content-script.js"), "utf8");
+  assert.match(source, /keepUnclassified/);
+  assert.match(source, /sniff: true/);
+  assert.match(source, /collectPerformanceCandidates/);
+});
+
+test("background sniffs unclassified manual-capture candidates", () => {
+  const source = fs.readFileSync(path.join(root, "background", "service-worker.js"), "utf8");
+  assert.match(source, /function sniffAndRecordCandidate/);
+  assert.match(source, /Range": "bytes=0-16383"/);
+  assert.match(source, /sniffedText/);
+  assert.match(source, /sniffRecorded/);
+});

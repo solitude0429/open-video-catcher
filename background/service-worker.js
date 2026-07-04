@@ -10,7 +10,9 @@ const captureUntilByTab = new Map();
 const diagnosticsByTab = new Map();
 const MAX_ITEMS_PER_TAB = 500;
 const CAPTURE_DURATION_MS = 90000;
-const WATCHED_TYPES = ["media", "xmlhttprequest", "object", "other"];
+const WATCHED_TYPES = ["main_frame", "sub_frame", "stylesheet", "script", "image", "font", "object", "xmlhttprequest", "ping", "csp_report", "media", "websocket", "other"];
+const MAX_SNIFF_BYTES = 16384;
+const sniffingUrls = new Set();
 
 function ignorePromise(result) {
   if (result && typeof result.catch === "function") result.catch(() => {});
@@ -52,6 +54,10 @@ function createDiagnostics(tabId, captureUntil = 0) {
     networkDiscarded: 0,
     pageCandidatesSeen: 0,
     pageCandidatesRecorded: 0,
+    pageCandidatesDiscarded: 0,
+    sniffAttempts: 0,
+    sniffRecorded: 0,
+    sniffFailed: 0,
     lastNetworkUrl: "",
     lastPageUrl: "",
     warning: ""
@@ -120,6 +126,114 @@ function recordItem(tabId, item, options = {}) {
   return true;
 }
 
+function sniffKey(tabId, url) {
+  return `${tabId}|${url}`;
+}
+
+function shouldSniffCandidate(candidate) {
+  return utils.shouldSniffMediaUrl(candidate?.url || "", {
+    requestType: candidate?.requestType || "",
+    mimeType: candidate?.mimeType || candidate?.contentType || ""
+  });
+}
+
+async function readResponsePrefix(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const contentDisposition = response.headers.get("content-disposition") || "";
+  const contentLength = Number(response.headers.get("content-length") || 0) || 0;
+  let bytes = new Uint8Array();
+
+  if (response.body && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (total < MAX_SNIFF_BYTES) {
+      const { value, done } = await reader.read();
+      if (done || !value) break;
+      const slice = value.slice(0, Math.max(0, MAX_SNIFF_BYTES - total));
+      chunks.push(slice);
+      total += slice.length;
+      if (value.length > slice.length) break;
+    }
+    try { await reader.cancel(); } catch (_error) {}
+    bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+  } else {
+    const buffer = await response.arrayBuffer();
+    bytes = new Uint8Array(buffer).slice(0, MAX_SNIFF_BYTES);
+  }
+
+  let sniffedText = "";
+  try {
+    sniffedText = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch (_error) {}
+  return { mimeType: contentType, contentDisposition, size: contentLength, sniffedBytes: bytes, sniffedText };
+}
+
+async function fetchSniff(url) {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 6000) : null;
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      credentials: "include",
+      redirect: "follow",
+      headers: { "Range": "bytes=0-16383" },
+      signal: controller ? controller.signal : undefined
+    });
+    if (!response.ok && response.status !== 206) throw new Error(`HTTP ${response.status}`);
+    return await readResponsePrefix(response);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function sniffAndRecordCandidate(tabId, candidate, diag, counterName) {
+  if (!Number.isInteger(tabId) || tabId < 0 || !candidate?.url || !isCaptureActive(tabId) || !shouldSniffCandidate(candidate)) return false;
+  const key = sniffKey(tabId, candidate.url);
+  if (sniffingUrls.has(key)) return false;
+  sniffingUrls.add(key);
+  diag.sniffAttempts += 1;
+  try {
+    const sniffed = await fetchSniff(candidate.url);
+    if (!isCaptureActive(tabId)) return false;
+    const item = utils.createMediaItem({
+      url: candidate.url,
+      pageUrl: candidate.pageUrl,
+      pageTitle: candidate.pageTitle,
+      label: candidate.label,
+      source: `${candidate.source || "candidate"}-sniff`,
+      requestType: candidate.requestType || "",
+      fromDom: Boolean(candidate.fromDom),
+      mimeType: candidate.mimeType || sniffed.mimeType || "",
+      contentDisposition: candidate.contentDisposition || sniffed.contentDisposition || "",
+      size: candidate.size || sniffed.size || 0,
+      sniffedBytes: sniffed.sniffedBytes,
+      sniffedText: sniffed.sniffedText,
+      now: Date.now()
+    });
+    if (!item) {
+      diag.sniffFailed += 1;
+      return false;
+    }
+    const recorded = recordItem(tabId, item);
+    if (recorded) {
+      diag.sniffRecorded += 1;
+      if (counterName && typeof diag[counterName] === "number") diag[counterName] += 1;
+    }
+    return recorded;
+  } catch (_error) {
+    diag.sniffFailed += 1;
+    return false;
+  } finally {
+    sniffingUrls.delete(key);
+  }
+}
+
 function recordRawMedia(tabId, rawItem, defaultSource) {
   if (!isCaptureActive(tabId)) return false;
   const diag = tabDiagnostics(tabId);
@@ -138,7 +252,11 @@ function recordRawMedia(tabId, rawItem, defaultSource) {
     size: rawItem.size || 0,
     now: Date.now()
   });
-  if (!item) return false;
+  if (!item) {
+    diag.pageCandidatesDiscarded += 1;
+    sniffAndRecordCandidate(tabId, Object.assign({}, rawItem, { source: rawItem.source || defaultSource || "page", fromDom: true }), diag, "pageCandidatesRecorded").catch(() => {});
+    return false;
+  }
   const recorded = recordItem(tabId, item);
   if (recorded) diag.pageCandidatesRecorded += 1;
   return recorded;
@@ -162,6 +280,14 @@ function recordFromRequest(details, extra) {
     if (recordItem(details.tabId, item)) diag.networkRecorded += 1;
   } else {
     diag.networkDiscarded += 1;
+    sniffAndRecordCandidate(details.tabId, {
+      url: details.url,
+      source: "network",
+      requestType: details.type,
+      mimeType: extra?.mimeType || "",
+      contentDisposition: extra?.contentDisposition || "",
+      size: extra?.size || 0
+    }, diag, "networkRecorded").catch(() => {});
   }
 }
 
