@@ -48,6 +48,9 @@ function shouldAnalyze(item) {
 function recordItem(tabId, item, options = {}) {
   if (!Number.isInteger(tabId) || tabId < 0 || !item || !item.id) return false;
   const store = tabStore(tabId);
+  for (const [key, existingItem] of store) {
+    if (key !== item.id && existingItem.url === item.url) store.delete(key);
+  }
   const existing = store.get(item.id);
   const merged = utils.mergeMediaItems(existing, item);
   store.set(item.id, merged);
@@ -70,6 +73,7 @@ function recordRawMedia(tabId, rawItem, defaultSource) {
     requestType: rawItem.requestType || "",
     fromDom: true,
     mimeType: rawItem.mimeType || "",
+    contentDisposition: rawItem.contentDisposition || "",
     size: rawItem.size || 0,
     now: Date.now()
   });
@@ -84,6 +88,7 @@ function recordFromRequest(details, extra) {
     source: "network",
     requestType: details.type,
     mimeType: extra?.mimeType || "",
+    contentDisposition: extra?.contentDisposition || "",
     size: extra?.size || 0,
     now: Date.now()
   });
@@ -185,8 +190,9 @@ api.webRequest.onHeadersReceived.addListener(
     const headers = details.responseHeaders || [];
     const contentType = headers.find((header) => header.name && header.name.toLowerCase() === "content-type")?.value || "";
     const contentLength = headers.find((header) => header.name && header.name.toLowerCase() === "content-length")?.value || "";
-    if (!contentType && !contentLength) return;
-    recordFromRequest(details, { mimeType: contentType, size: Number(contentLength) || 0 });
+    const contentDisposition = headers.find((header) => header.name && header.name.toLowerCase() === "content-disposition")?.value || "";
+    if (!contentType && !contentLength && !contentDisposition) return;
+    recordFromRequest(details, { mimeType: contentType, contentDisposition, size: Number(contentLength) || 0 });
   },
   { urls: ["<all_urls>"], types: WATCHED_TYPES },
   ["responseHeaders"]
