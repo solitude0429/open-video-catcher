@@ -41,6 +41,21 @@ test("background injects page hook in the main world and exposes diagnostics", (
   assert.match(source, /api\.permissions\.contains\(\{ origins: \["<all_urls>"\] \}/);
 });
 
+test("background prefers promise-style extension APIs so detection start cannot hang", () => {
+  const source = fs.readFileSync(path.join(root, "background", "service-worker.js"), "utf8");
+  assert.match(source, /function extensionApiCall\(promiseInvoke, callbackInvoke/);
+  assert.match(source, /const result = promiseInvoke\(\)/);
+  assert.match(source, /\(\) => api\.scripting\.executeScript\(details\),\s*\(done\) => api\.scripting\.executeScript\(details, done\)/);
+  assert.match(source, /\(\) => api\.tabs\.sendMessage\(tabId, message\),\s*\(done\) => api\.tabs\.sendMessage\(tabId, message, done\)/);
+});
+
+test("popup also uses promise-style extension APIs for tab query and runtime messages", () => {
+  const source = fs.readFileSync(path.join(root, "popup", "popup.js"), "utf8");
+  assert.match(source, /function extensionApiCall\(promiseInvoke, callbackInvoke/);
+  assert.match(source, /\(\) => chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\),\s*\(done\) => chrome\.tabs\.query\(\{ active: true, currentWindow: true \}, done\)/);
+  assert.match(source, /\(\) => chrome\.runtime\.sendMessage\(message\),\s*\(done\) => chrome\.runtime\.sendMessage\(message, done\)/);
+});
+
 test("popup renders empty-state diagnostics", () => {
   const source = fs.readFileSync(path.join(root, "popup", "popup.js"), "utf8");
   assert.match(source, /function diagnosticText/);
