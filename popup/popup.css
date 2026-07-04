@@ -88,13 +88,27 @@ h1 {
 #content { padding: 0 12px 14px; }
 
 .empty, .status {
-  margin: 26px 6px;
+  margin: 26px 6px 10px;
   padding: 22px;
   border: 1px dashed rgba(148, 163, 184, 0.35);
   border-radius: 14px;
   color: #94a3b8;
   text-align: center;
   line-height: 1.5;
+}
+
+.diagnostics {
+  margin: 10px 6px 18px;
+  padding: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 12px;
+  background: rgba(69, 26, 3, 0.35);
+  color: #fde68a;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .item {

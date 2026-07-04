@@ -7,6 +7,7 @@ const api = chrome;
 const mediaByTab = new Map();
 const analyzedPlaylists = new Set();
 const captureUntilByTab = new Map();
+const diagnosticsByTab = new Map();
 const MAX_ITEMS_PER_TAB = 500;
 const CAPTURE_DURATION_MS = 90000;
 const WATCHED_TYPES = ["media", "xmlhttprequest", "object", "other"];
@@ -30,7 +31,36 @@ function isCaptureActive(tabId) {
 function startCaptureWindow(tabId, durationMs = CAPTURE_DURATION_MS) {
   const until = Date.now() + durationMs;
   captureUntilByTab.set(tabId, until);
+  diagnosticsByTab.set(tabId, createDiagnostics(tabId, until));
   return until;
+}
+
+function createDiagnostics(tabId, captureUntil = 0) {
+  return {
+    tabId,
+    startedAt: Date.now(),
+    captureUntil,
+    contentInjectionOk: false,
+    contentFrames: 0,
+    mainWorldHookOk: false,
+    mainWorldHookFrames: 0,
+    contentFallbackHookOk: false,
+    scanMessageOk: false,
+    hostPermissionGranted: null,
+    networkSeen: 0,
+    networkRecorded: 0,
+    networkDiscarded: 0,
+    pageCandidatesSeen: 0,
+    pageCandidatesRecorded: 0,
+    lastNetworkUrl: "",
+    lastPageUrl: "",
+    warning: ""
+  };
+}
+
+function tabDiagnostics(tabId) {
+  if (!diagnosticsByTab.has(tabId)) diagnosticsByTab.set(tabId, createDiagnostics(tabId, captureUntilByTab.get(tabId) || 0));
+  return diagnosticsByTab.get(tabId);
 }
 
 function resetTab(tabId) {
@@ -88,6 +118,9 @@ function recordItem(tabId, item, options = {}) {
 
 function recordRawMedia(tabId, rawItem, defaultSource) {
   if (!isCaptureActive(tabId)) return false;
+  const diag = tabDiagnostics(tabId);
+  diag.pageCandidatesSeen += 1;
+  diag.lastPageUrl = utils.redactUrl(rawItem?.url || "");
   const item = utils.createMediaItem({
     url: rawItem.url,
     pageUrl: rawItem.pageUrl,
@@ -102,11 +135,16 @@ function recordRawMedia(tabId, rawItem, defaultSource) {
     now: Date.now()
   });
   if (!item) return false;
-  return recordItem(tabId, item);
+  const recorded = recordItem(tabId, item);
+  if (recorded) diag.pageCandidatesRecorded += 1;
+  return recorded;
 }
 
 function recordFromRequest(details, extra) {
   if (!details || details.tabId < 0 || !details.url || !isCaptureActive(details.tabId)) return;
+  const diag = tabDiagnostics(details.tabId);
+  diag.networkSeen += 1;
+  diag.lastNetworkUrl = utils.redactUrl(details.url);
   const item = utils.createMediaItem({
     url: details.url,
     source: "network",
@@ -116,7 +154,11 @@ function recordFromRequest(details, extra) {
     size: extra?.size || 0,
     now: Date.now()
   });
-  if (item) recordItem(details.tabId, item);
+  if (item) {
+    if (recordItem(details.tabId, item)) diag.networkRecorded += 1;
+  } else {
+    diag.networkDiscarded += 1;
+  }
 }
 
 
@@ -161,6 +203,17 @@ function extensionApiCall(callbackInvoke, promiseInvoke) {
   });
 }
 
+async function executeScript(details) {
+  return extensionApiCall(
+    (done) => api.scripting.executeScript(details, done),
+    () => api.scripting.executeScript(details)
+  );
+}
+
+function resultCount(results) {
+  return Array.isArray(results) ? results.length : 0;
+}
+
 async function ensureContentScripts(tabId) {
   if (!api.scripting || typeof api.scripting.executeScript !== "function") {
     throw new Error("scripting API를 사용할 수 없습니다.");
@@ -173,14 +226,19 @@ async function ensureContentScripts(tabId) {
     target: { tabId, allFrames: true },
     files: ["content/content-script.js"]
   };
-  await extensionApiCall(
-    (done) => api.scripting.executeScript(shared, done),
-    () => api.scripting.executeScript(shared)
-  );
-  await extensionApiCall(
-    (done) => api.scripting.executeScript(content, done),
-    () => api.scripting.executeScript(content)
-  );
+  const sharedResults = await executeScript(shared);
+  const contentResults = await executeScript(content);
+  return resultCount(sharedResults) + resultCount(contentResults);
+}
+
+async function injectPageHookMainWorld(tabId) {
+  const details = {
+    target: { tabId, allFrames: true },
+    files: ["page/page-hook.js"],
+    world: "MAIN"
+  };
+  const results = await executeScript(details);
+  return resultCount(results);
 }
 
 async function sendTabMessage(tabId, message) {
@@ -190,30 +248,57 @@ async function sendTabMessage(tabId, message) {
   );
 }
 
+async function hasAllUrlsPermission() {
+  if (!api.permissions || typeof api.permissions.contains !== "function") return null;
+  try {
+    return await extensionApiCall(
+      (done) => api.permissions.contains({ origins: ["<all_urls>"] }, done),
+      () => api.permissions.contains({ origins: ["<all_urls>"] })
+    );
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function startDetection(tabId) {
   if (!Number.isInteger(tabId) || tabId < 0) return { ok: false, error: "활성 탭을 찾을 수 없습니다." };
   resetTab(tabId);
   const captureUntil = startCaptureWindow(tabId);
-  let injectionOk = true;
-  let scanOk = true;
-  let warning = "";
+  const diag = tabDiagnostics(tabId);
+  diag.hostPermissionGranted = await hasAllUrlsPermission();
 
   try {
-    await ensureContentScripts(tabId);
-    await sendTabMessage(tabId, { type: "OVC_SCAN_NOW", durationMs: CAPTURE_DURATION_MS });
+    diag.contentFrames = await ensureContentScripts(tabId);
+    diag.contentInjectionOk = true;
   } catch (error) {
-    injectionOk = false;
-    scanOk = false;
-    warning = error.message || String(error);
+    diag.warning = `content script 주입 실패: ${error.message || String(error)}`;
+  }
+
+  try {
+    diag.mainWorldHookFrames = await injectPageHookMainWorld(tabId);
+    diag.mainWorldHookOk = true;
+  } catch (error) {
+    const message = `main-world hook 주입 실패: ${error.message || String(error)}`;
+    diag.warning = diag.warning ? `${diag.warning}; ${message}` : message;
+  }
+
+  try {
+    const scanResult = await sendTabMessage(tabId, { type: "OVC_SCAN_NOW", durationMs: CAPTURE_DURATION_MS });
+    diag.scanMessageOk = true;
+    diag.contentFallbackHookOk = Boolean(scanResult?.pageHookInjected);
+  } catch (error) {
+    const message = `스캔 메시지 실패: ${error.message || String(error)}`;
+    diag.warning = diag.warning ? `${diag.warning}; ${message}` : message;
   }
 
   return {
     ok: true,
     captureUntil,
     durationMs: CAPTURE_DURATION_MS,
-    injectionOk,
-    scanOk,
-    warning,
+    injectionOk: diag.contentInjectionOk,
+    scanOk: diag.scanMessageOk,
+    warning: diag.warning,
+    diagnostics: diag,
     items: sortedItems(tabId)
   };
 }
@@ -337,7 +422,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "OVC_GET_TAB_MEDIA") {
     const tabId = Number(message.tabId);
-    sendResponse({ ok: true, items: sortedItems(tabId), captureActive: isCaptureActive(tabId), captureUntil: captureUntilByTab.get(tabId) || 0 });
+    sendResponse({ ok: true, items: sortedItems(tabId), captureActive: isCaptureActive(tabId), captureUntil: captureUntilByTab.get(tabId) || 0, diagnostics: tabDiagnostics(tabId) });
     return true;
   }
 
@@ -351,6 +436,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = Number(message.tabId);
     resetTab(tabId);
     captureUntilByTab.delete(tabId);
+    diagnosticsByTab.delete(tabId);
     sendResponse({ ok: true });
     return true;
   }
@@ -398,11 +484,13 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 api.tabs.onRemoved.addListener((tabId) => {
   resetTab(tabId);
   captureUntilByTab.delete(tabId);
+  diagnosticsByTab.delete(tabId);
 });
 
 api.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
     resetTab(tabId);
     captureUntilByTab.delete(tabId);
+    diagnosticsByTab.delete(tabId);
   }
 });
