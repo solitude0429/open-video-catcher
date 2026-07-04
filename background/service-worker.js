@@ -91,7 +91,11 @@ function setBadge(tabId) {
 }
 
 function notifyPopup(tabId) {
-  ignorePromise(api.runtime.sendMessage({ type: "OVC_TAB_MEDIA_UPDATED", tabId }).catch?.(() => {}));
+  try {
+    ignorePromise(api.runtime.sendMessage({ type: "OVC_TAB_MEDIA_UPDATED", tabId }));
+  } catch (_error) {
+    // Popup may be closed; notification is best-effort only.
+  }
 }
 
 function shouldAnalyze(item) {
@@ -162,51 +166,65 @@ function recordFromRequest(details, extra) {
 }
 
 
-function extensionApiCall(callbackInvoke, promiseInvoke) {
+function extensionApiCall(promiseInvoke, callbackInvoke, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let callbackAttempted = false;
+    let timer = 0;
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       const error = api.runtime.lastError;
       if (error) reject(new Error(error.message));
       else resolve(result);
     };
-    try {
-      const maybePromise = callbackInvoke(finish);
-      if (maybePromise && typeof maybePromise.then === "function") {
-        maybePromise.then(finish, (error) => {
-          if (!settled) {
-            settled = true;
-            reject(error);
-          }
-        });
-      } else if (maybePromise !== undefined) {
-        finish(maybePromise);
-      }
-    } catch (callbackError) {
-      if (!promiseInvoke) {
-        reject(callbackError);
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+    const tryCallback = (cause) => {
+      if (settled || callbackAttempted || typeof callbackInvoke !== "function") {
+        if (cause) fail(cause);
         return;
       }
+      callbackAttempted = true;
       try {
-        Promise.resolve(promiseInvoke()).then(finish, (error) => {
-          if (!settled) {
-            settled = true;
-            reject(error);
-          }
-        });
-      } catch (_promiseError) {
-        reject(callbackError);
+        const result = callbackInvoke(finish);
+        if (result && typeof result.then === "function") result.then(finish, fail);
+        else if (result !== undefined) finish(result);
+      } catch (error) {
+        fail(cause || error);
       }
+    };
+
+    try {
+      const result = promiseInvoke();
+      if (result && typeof result.then === "function") {
+        result.then(finish, (error) => tryCallback(error));
+      } else if (result !== undefined) {
+        finish(result);
+      } else {
+        tryCallback();
+      }
+    } catch (error) {
+      tryCallback(error);
+    }
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (!settled) fail(new Error("브라우저 확장 API 응답 시간이 초과되었습니다."));
+      }, timeoutMs);
     }
   });
 }
 
 async function executeScript(details) {
   return extensionApiCall(
-    (done) => api.scripting.executeScript(details, done),
-    () => api.scripting.executeScript(details)
+    () => api.scripting.executeScript(details),
+    (done) => api.scripting.executeScript(details, done)
   );
 }
 
@@ -243,8 +261,8 @@ async function injectPageHookMainWorld(tabId) {
 
 async function sendTabMessage(tabId, message) {
   return extensionApiCall(
-    (done) => api.tabs.sendMessage(tabId, message, done),
-    () => api.tabs.sendMessage(tabId, message)
+    () => api.tabs.sendMessage(tabId, message),
+    (done) => api.tabs.sendMessage(tabId, message, done)
   );
 }
 
@@ -252,8 +270,8 @@ async function hasAllUrlsPermission() {
   if (!api.permissions || typeof api.permissions.contains !== "function") return null;
   try {
     return await extensionApiCall(
-      (done) => api.permissions.contains({ origins: ["<all_urls>"] }, done),
-      () => api.permissions.contains({ origins: ["<all_urls>"] })
+      () => api.permissions.contains({ origins: ["<all_urls>"] }),
+      (done) => api.permissions.contains({ origins: ["<all_urls>"] }, done)
     );
   } catch (_error) {
     return null;

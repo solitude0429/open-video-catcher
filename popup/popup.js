@@ -16,24 +16,69 @@
   let diagnostics = null;
   let statusMessage = "감지 시작을 누르면 현재 탭을 일정 시간만 감지합니다.";
 
-  function promisifyChrome(call) {
+  function extensionApiCall(promiseInvoke, callbackInvoke, timeoutMs = 3000) {
     return new Promise((resolve) => {
-      call((result) => {
+      let settled = false;
+      let callbackAttempted = false;
+      let timer = 0;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
         const error = chrome.runtime.lastError;
         if (error) resolve({ ok: false, error: error.message });
         else resolve({ ok: true, result });
-      });
+      };
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve({ ok: false, error: error?.message || String(error) });
+      };
+      const tryCallback = (cause) => {
+        if (settled || callbackAttempted || typeof callbackInvoke !== "function") {
+          if (cause) fail(cause);
+          return;
+        }
+        callbackAttempted = true;
+        try {
+          const result = callbackInvoke(finish);
+          if (result && typeof result.then === "function") result.then(finish, fail);
+          else if (result !== undefined) finish(result);
+        } catch (error) {
+          fail(cause || error);
+        }
+      };
+
+      try {
+        const result = promiseInvoke();
+        if (result && typeof result.then === "function") result.then(finish, (error) => tryCallback(error));
+        else if (result !== undefined) finish(result);
+        else tryCallback();
+      } catch (error) {
+        tryCallback(error);
+      }
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => fail(new Error("브라우저 확장 API 응답 시간이 초과되었습니다.")), timeoutMs);
+      }
     });
   }
 
   async function getActiveTab() {
-    const response = await promisifyChrome((done) => chrome.tabs.query({ active: true, currentWindow: true }, done));
+    const response = await extensionApiCall(
+      () => chrome.tabs.query({ active: true, currentWindow: true }),
+      (done) => chrome.tabs.query({ active: true, currentWindow: true }, done)
+    );
     if (!response.ok) throw new Error(response.error);
     return response.result[0];
   }
 
   function sendRuntimeMessage(message) {
-    return promisifyChrome((done) => chrome.runtime.sendMessage(message, done));
+    return extensionApiCall(
+      () => chrome.runtime.sendMessage(message),
+      (done) => chrome.runtime.sendMessage(message, done)
+    );
   }
 
   function setStatus(text) {
