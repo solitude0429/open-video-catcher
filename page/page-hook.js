@@ -88,5 +88,6 @@
   }
 
   window.addEventListener("load", scanPerformance, { once: true });
+  scanPerformance();
   setInterval(scanPerformance, 3000);
 })();

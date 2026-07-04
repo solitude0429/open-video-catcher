@@ -10,23 +10,23 @@
   <header class="hero">
     <div>
       <h1>Open Video Catcher</h1>
-      <p>DOM · 네트워크 · fetch/XHR · HLS/DASH 분석</p>
+      <p>수동 감지 · DOM · 네트워크 · fetch/XHR · HLS/DASH 분석</p>
     </div>
     <span id="countBadge" class="count">0</span>
   </header>
 
   <section class="notice">
-    감지 강화 모드: 페이지 내부 fetch/XHR, MediaSource blob, playlist variant까지 추적합니다.
+    감지 시작 버튼을 누른 뒤 현재 탭만 일정 시간 감지합니다. 플레이어가 URL을 늦게 만들면 감지 시작 후 재생/seek 하세요.
   </section>
 
   <nav class="toolbar" aria-label="actions">
-    <button id="refreshButton" type="button">다시 스캔</button>
+    <button id="refreshButton" type="button">감지 시작</button>
     <button id="clearButton" type="button" class="secondary">목록 지우기</button>
     <label class="toggle"><input id="hideSegments" type="checkbox" checked> 조각 파일 숨김</label>
   </nav>
 
   <main id="content">
-    <div class="empty">페이지에서 영상을 재생한 뒤 다시 열어보세요.</div>
+    <div class="empty">감지 시작을 눌러 현재 탭을 수동 감지하세요.</div>
   </main>
 
   <template id="itemTemplate">

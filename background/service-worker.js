@@ -6,7 +6,9 @@ const utils = globalThis.OpenVideoCatcherUtils;
 const api = chrome;
 const mediaByTab = new Map();
 const analyzedPlaylists = new Set();
+const captureUntilByTab = new Map();
 const MAX_ITEMS_PER_TAB = 500;
+const CAPTURE_DURATION_MS = 90000;
 const WATCHED_TYPES = ["media", "xmlhttprequest", "object", "other"];
 
 function ignorePromise(result) {
@@ -16,6 +18,27 @@ function ignorePromise(result) {
 function tabStore(tabId) {
   if (!mediaByTab.has(tabId)) mediaByTab.set(tabId, new Map());
   return mediaByTab.get(tabId);
+}
+
+function isCaptureActive(tabId) {
+  const until = captureUntilByTab.get(tabId) || 0;
+  if (Date.now() <= until) return true;
+  if (until) captureUntilByTab.delete(tabId);
+  return false;
+}
+
+function startCaptureWindow(tabId, durationMs = CAPTURE_DURATION_MS) {
+  const until = Date.now() + durationMs;
+  captureUntilByTab.set(tabId, until);
+  return until;
+}
+
+function resetTab(tabId) {
+  mediaByTab.delete(tabId);
+  for (const key of Array.from(analyzedPlaylists)) {
+    if (key.startsWith(`${tabId}|`)) analyzedPlaylists.delete(key);
+  }
+  setBadge(tabId);
 }
 
 function sortedItems(tabId) {
@@ -64,6 +87,7 @@ function recordItem(tabId, item, options = {}) {
 }
 
 function recordRawMedia(tabId, rawItem, defaultSource) {
+  if (!isCaptureActive(tabId)) return false;
   const item = utils.createMediaItem({
     url: rawItem.url,
     pageUrl: rawItem.pageUrl,
@@ -82,7 +106,7 @@ function recordRawMedia(tabId, rawItem, defaultSource) {
 }
 
 function recordFromRequest(details, extra) {
-  if (!details || details.tabId < 0 || !details.url) return;
+  if (!details || details.tabId < 0 || !details.url || !isCaptureActive(details.tabId)) return;
   const item = utils.createMediaItem({
     url: details.url,
     source: "network",
@@ -93,6 +117,105 @@ function recordFromRequest(details, extra) {
     now: Date.now()
   });
   if (item) recordItem(details.tabId, item);
+}
+
+
+function extensionApiCall(callbackInvoke, promiseInvoke) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      const error = api.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(result);
+    };
+    try {
+      const maybePromise = callbackInvoke(finish);
+      if (maybePromise && typeof maybePromise.then === "function") {
+        maybePromise.then(finish, (error) => {
+          if (!settled) {
+            settled = true;
+            reject(error);
+          }
+        });
+      } else if (maybePromise !== undefined) {
+        finish(maybePromise);
+      }
+    } catch (callbackError) {
+      if (!promiseInvoke) {
+        reject(callbackError);
+        return;
+      }
+      try {
+        Promise.resolve(promiseInvoke()).then(finish, (error) => {
+          if (!settled) {
+            settled = true;
+            reject(error);
+          }
+        });
+      } catch (_promiseError) {
+        reject(callbackError);
+      }
+    }
+  });
+}
+
+async function ensureContentScripts(tabId) {
+  if (!api.scripting || typeof api.scripting.executeScript !== "function") {
+    throw new Error("scripting API를 사용할 수 없습니다.");
+  }
+  const shared = {
+    target: { tabId, allFrames: true },
+    files: ["src/media-utils.js"]
+  };
+  const content = {
+    target: { tabId, allFrames: true },
+    files: ["content/content-script.js"]
+  };
+  await extensionApiCall(
+    (done) => api.scripting.executeScript(shared, done),
+    () => api.scripting.executeScript(shared)
+  );
+  await extensionApiCall(
+    (done) => api.scripting.executeScript(content, done),
+    () => api.scripting.executeScript(content)
+  );
+}
+
+async function sendTabMessage(tabId, message) {
+  return extensionApiCall(
+    (done) => api.tabs.sendMessage(tabId, message, done),
+    () => api.tabs.sendMessage(tabId, message)
+  );
+}
+
+async function startDetection(tabId) {
+  if (!Number.isInteger(tabId) || tabId < 0) return { ok: false, error: "활성 탭을 찾을 수 없습니다." };
+  resetTab(tabId);
+  const captureUntil = startCaptureWindow(tabId);
+  let injectionOk = true;
+  let scanOk = true;
+  let warning = "";
+
+  try {
+    await ensureContentScripts(tabId);
+    await sendTabMessage(tabId, { type: "OVC_SCAN_NOW", durationMs: CAPTURE_DURATION_MS });
+  } catch (error) {
+    injectionOk = false;
+    scanOk = false;
+    warning = error.message || String(error);
+  }
+
+  return {
+    ok: true,
+    captureUntil,
+    durationMs: CAPTURE_DURATION_MS,
+    injectionOk,
+    scanOk,
+    warning,
+    items: sortedItems(tabId)
+  };
 }
 
 async function fetchText(url) {
@@ -214,17 +337,20 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "OVC_GET_TAB_MEDIA") {
     const tabId = Number(message.tabId);
-    sendResponse({ ok: true, items: sortedItems(tabId) });
+    sendResponse({ ok: true, items: sortedItems(tabId), captureActive: isCaptureActive(tabId), captureUntil: captureUntilByTab.get(tabId) || 0 });
+    return true;
+  }
+
+  if (message.type === "OVC_START_DETECTION") {
+    const tabId = Number(message.tabId);
+    startDetection(tabId).then(sendResponse);
     return true;
   }
 
   if (message.type === "OVC_CLEAR_TAB") {
     const tabId = Number(message.tabId);
-    mediaByTab.delete(tabId);
-    for (const key of Array.from(analyzedPlaylists)) {
-      if (key.startsWith(`${tabId}|`)) analyzedPlaylists.delete(key);
-    }
-    setBadge(tabId);
+    resetTab(tabId);
+    captureUntilByTab.delete(tabId);
     sendResponse({ ok: true });
     return true;
   }
@@ -270,18 +396,13 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 api.tabs.onRemoved.addListener((tabId) => {
-  mediaByTab.delete(tabId);
-  for (const key of Array.from(analyzedPlaylists)) {
-    if (key.startsWith(`${tabId}|`)) analyzedPlaylists.delete(key);
-  }
+  resetTab(tabId);
+  captureUntilByTab.delete(tabId);
 });
 
 api.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
-    mediaByTab.delete(tabId);
-    for (const key of Array.from(analyzedPlaylists)) {
-      if (key.startsWith(`${tabId}|`)) analyzedPlaylists.delete(key);
-    }
-    setBadge(tabId);
+    resetTab(tabId);
+    captureUntilByTab.delete(tabId);
   }
 });

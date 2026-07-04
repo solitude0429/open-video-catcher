@@ -5,18 +5,36 @@
   if (!utils || window.__openVideoCatcherInstalled) return;
   window.__openVideoCatcherInstalled = true;
 
+  const CAPTURE_DEFAULT_MS = 90000;
+  const MEDIA_INITIATORS = new Set(["video", "audio", "source", "media", "fetch", "xmlhttprequest", "other"]);
   const seen = new Map();
   let scanTimer = 0;
+  let stopTimer = 0;
+  let captureUntil = 0;
+  let pageHookInjected = false;
+  let observer = null;
+
+  function isCaptureActive() {
+    const active = Date.now() <= captureUntil;
+    if (!active && observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    return active;
+  }
 
   function injectPageHook() {
+    if (pageHookInjected) return true;
     try {
       const script = document.createElement("script");
       script.src = chrome.runtime.getURL("page/page-hook.js");
       script.async = false;
       script.onload = () => script.remove();
       (document.documentElement || document.head || document.body).appendChild(script);
+      pageHookInjected = true;
+      return true;
     } catch (_error) {
-      // Some restricted pages reject injection; DOM + webRequest detection still works.
+      return false;
     }
   }
 
@@ -78,7 +96,21 @@
     return candidates;
   }
 
+  function collectPerformanceCandidates() {
+    const candidates = [];
+    try {
+      for (const entry of performance.getEntriesByType("resource")) {
+        const initiator = String(entry.initiatorType || "").toLowerCase();
+        if (!MEDIA_INITIATORS.has(initiator) && !utils.extensionFromUrl(entry.name)) continue;
+        const candidate = candidateFromUrl(entry.name, initiator || "resource", "", `performance-${initiator || "resource"}`, initiator);
+        if (candidate) candidates.push(candidate);
+      }
+    } catch (_error) {}
+    return candidates;
+  }
+
   function sendCandidates(candidates) {
+    if (!isCaptureActive()) return;
     const fresh = [];
     for (const candidate of candidates) {
       const key = `${candidate.source || ""}|${candidate.url}|${candidate.mimeType || ""}`;
@@ -95,42 +127,61 @@
 
   function scanNow() {
     scanTimer = 0;
-    sendCandidates(collectCandidates());
+    if (!isCaptureActive()) return;
+    sendCandidates(collectCandidates().concat(collectPerformanceCandidates()));
   }
 
   function scheduleScan() {
-    if (scanTimer) return;
+    if (!isCaptureActive() || scanTimer) return;
     scanTimer = window.setTimeout(scanNow, 250);
   }
 
+  function startObserver() {
+    if (observer) return;
+    observer = new MutationObserver(scheduleScan);
+    observer.observe(document.documentElement || document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src", "href"]
+    });
+  }
+
+  function armCapture(durationMs) {
+    const ms = Number(durationMs || CAPTURE_DEFAULT_MS) || CAPTURE_DEFAULT_MS;
+    captureUntil = Math.max(captureUntil, Date.now() + ms);
+    const hookInjected = injectPageHook();
+    startObserver();
+    if (stopTimer) window.clearTimeout(stopTimer);
+    stopTimer = window.setTimeout(() => {
+      if (!isCaptureActive() && observer) {
+        observer.disconnect();
+        observer = null;
+      }
+    }, ms + 500);
+    scheduleScan();
+    return { hookInjected, captureUntil };
+  }
+
   window.addEventListener("__OVC_MEDIA_CANDIDATE", (event) => {
+    if (!isCaptureActive()) return;
     const detail = event.detail || {};
     const candidate = candidateFromUrl(detail.url, detail.label || detail.source || "page", detail.mimeType || "", detail.source || "page-hook", detail.requestType || "");
     if (candidate) sendCandidates([candidate]);
   });
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "OVC_SCAN_NOW") {
-      scanNow();
-      sendResponse({ ok: true });
-      return true;
-    }
-    return false;
-  });
-
-  injectPageHook();
   document.addEventListener("loadedmetadata", scheduleScan, true);
   document.addEventListener("play", scheduleScan, true);
   document.addEventListener("loadstart", scheduleScan, true);
   window.addEventListener("pageshow", scheduleScan);
 
-  const observer = new MutationObserver(scheduleScan);
-  observer.observe(document.documentElement || document, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["src", "href"]
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "OVC_SCAN_NOW") {
+      const result = armCapture(message.durationMs);
+      scanNow();
+      sendResponse({ ok: true, captureUntil: result.captureUntil, pageHookInjected: result.hookInjected });
+      return true;
+    }
+    return false;
   });
-
-  scheduleScan();
 })();
