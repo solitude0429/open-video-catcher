@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Open Video Catcher",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "CocoCut-like video/audio detector with DOM, network, page-hook, HLS/DASH analysis, and download helpers for accessible media.",
   "icons": {
     "16": "icons/icon-16.png",
