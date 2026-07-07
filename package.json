@@ -1,6 +1,6 @@
 {
   "name": "open-video-catcher",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "description": "CocoCut-like WebExtension for detecting and downloading accessible page media.",
   "type": "commonjs",
