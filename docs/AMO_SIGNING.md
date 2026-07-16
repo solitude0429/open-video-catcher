@@ -11,7 +11,7 @@ The workflow `.github/workflows/sign-firefox.yml`:
 3. Transfers a SHA-256-verified signing bundle to the protected `amo-signing` environment.
 4. Runs the lockfile-installed `web-ext sign --channel unlisted` using AMO JWT credentials, with no checkout or dependency install in the secret-bearing job.
 5. Derives `updates.json` version, add-on ID, compatibility floor, and SHA-512 hash from the exact signed XPI bytes.
-6. Attests the exact signed update-channel checksums and appends matching signed Firefox assets to the existing immutable GitHub Release without replacing conflicting bytes.
+6. Attests the exact signed update-channel checksums and appends matching signed Firefox assets to the existing GitHub Release without replacing conflicting bytes.
 7. Publishes checksums, source metadata, `updates.json`, and the signed XPI to GitHub Pages in separate non-secret assembly/deploy jobs.
 
 The extension ID is stable:

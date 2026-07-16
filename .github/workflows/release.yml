@@ -68,7 +68,7 @@ jobs:
         with:
           name: release-assets-${{ github.ref_name }}
           path: assets
-      - name: Verify and publish immutable release assets
+      - name: Verify and publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
