@@ -23,7 +23,15 @@
     <button id="refreshButton" type="button">감지 시작</button>
     <button id="clearButton" type="button" class="secondary">목록 지우기</button>
     <label class="toggle"><input id="hideSegments" type="checkbox" checked> 조각 파일 숨김</label>
+    <label class="toggle">명령 셸
+      <select id="commandShell">
+        <option value="posix">POSIX</option>
+        <option value="powershell">PowerShell</option>
+      </select>
+    </label>
   </nav>
+
+  <p class="authWarning">복사 명령에는 브라우저 로그인 쿠키·Authorization·Referer가 포함되지 않습니다. 반대로 브라우저 직접 다운로드는 쿠키를 사용할 수 있고 리디렉션과 다운로드 기록을 남길 수 있어 실행 전에 확인을 요구합니다.</p>
 
   <main id="content">
     <div class="empty">감지 시작을 눌러 현재 탭을 수동 감지하세요.</div>
@@ -37,7 +45,10 @@
       </div>
       <div class="quality"></div>
       <div class="meta"></div>
-      <div class="url"></div>
+      <details class="urlDisclosure">
+        <summary>URL 표시</summary>
+        <div class="url"></div>
+      </details>
       <div class="analysis"></div>
       <p class="hint"></p>
       <div class="buttons">

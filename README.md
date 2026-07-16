@@ -8,16 +8,16 @@
 - 페이지의 `<video>`, `<audio>`, `<source>`, 직접 미디어 링크 감지
 - 감지 창이 열린 동안 브라우저 네트워크 요청에서 `mp4`, `webm`, `m4v`, `mov`, `mp3`, `m4a`, `m3u8`, `mpd` 등 감지
 - 감지 창이 열린 동안 페이지 내부 `fetch`, `XMLHttpRequest`, `URL.createObjectURL`, Performance resource entry hook으로 동적 플레이어 URL 추가 감지
-- page hook은 `scripting.executeScript(..., world: "MAIN")`로 먼저 주입하고, 실패 시 content script fallback을 사용
+- page hook은 웹 접근 가능 script 태그 없이 `scripting.executeScript(..., world: "MAIN")`로만 주입
 - 빈 결과일 때 site access, content/main-world hook, page/network 후보 수를 팝업 진단으로 표시
-- HLS `.m3u8` playlist 자동 분석: master/media playlist, variant 품질, bandwidth, segment 수, 암호화 표시 감지
-- DASH `.mpd` manifest 분석: representation 수, 해상도/bitrate, ContentProtection 표시 감지
+- 사용자가 **playlist 분석**을 누른 HLS `.m3u8`의 master/media, variant 품질, bandwidth, segment 수, 암호화 표시 감지
+- 사용자가 **playlist 분석**을 누른 DASH `.mpd`의 representation 수, 해상도/bitrate, ContentProtection 표시 감지
 - 팝업에서 감지된 항목 목록, MIME/크기/출처/품질/분석 결과 표시
 - 일반 HTTP(S) 비디오/오디오 파일 직접 다운로드
 - HLS/DASH는 `.m3u8`/`.mpd` 파일을 영상으로 오인해 저장하지 않도록 직접 다운로드를 막고 `ffmpeg`/`yt-dlp` 명령 복사 제공
 - MIME type과 `Content-Disposition`을 반영한 파일명/확장자 추정
-- `URL`, `ffmpeg`, `curl`, `yt-dlp` 명령 복사
-- 민감한 CDN 쿼리스트링은 화면 표시에서 `?…`로 마스킹하면서 실제 다운로드 URL은 보존
+- `URL`, `ffmpeg`, `curl`, `yt-dlp` 명령을 POSIX/PowerShell 인용 방식으로 구분해 복사
+- 민감한 CDN 쿼리스트링은 화면 표시에서 `?…`로 마스킹하고 URL 표시도 기본적으로 접어 두면서 실제 다운로드 URL은 보존
 - 아이콘 포함: 16/32/48/96/128 PNG + SVG 원본
 - 외부 서버/텔레메트리 없음
 
@@ -28,8 +28,9 @@
 - 정적 `<video src>`/`<source src>`/직접 링크는 재생 전에도 감지될 수 있습니다.
 - HLS/DASH/MSE 플레이어는 실제 playlist·segment URL을 재생/seek 시점에 만드는 경우가 많아, **감지 시작 후 재생 또는 seek**가 필요할 수 있습니다.
 - `blob:` URL은 원본 주소가 아니라 브라우저 메모리 객체입니다. page-hook이 `fetch`/`XHR`/network 쪽 원본 URL을 같이 잡도록 보강했습니다.
-- HLS/DASH는 playlist/manifest를 분석하고 `ffmpeg`/`yt-dlp` 명령을 복사할 수 있습니다. 브라우저 다운로드 버튼은 `.m3u8`/`.mpd`를 최종 영상 파일처럼 저장하지 않도록 비활성화합니다.
+- HLS/DASH는 사용자가 요청할 때만 제한된 크기·시간·횟수 안에서 playlist/manifest를 분석하고 `ffmpeg`/`yt-dlp` 명령을 복사할 수 있습니다. 브라우저 다운로드 버튼은 `.m3u8`/`.mpd`를 최종 영상 파일처럼 저장하지 않도록 비활성화합니다.
 - 암호화/ContentProtection 표시는 분석 결과에 보여줍니다.
+- 브라우저 로그인 쿠키·Authorization·Referer는 외부 명령으로 전달하지 않습니다. 인증이 필요한 미디어와 만료된 서명 URL은 외부 도구에서 실패할 수 있습니다.
 
 ## 설치: Chrome / Edge
 
@@ -70,10 +71,13 @@ npm run lint
 npm test
 npm run build
 npm run lint:webext
+npx --no-install playwright-core install chromium
+npm run test:browser
 npm audit --audit-level=moderate
 ```
 
 빌드 결과는 `dist/open-video-catcher-chrome-edge.zip`과 `dist/open-video-catcher-firefox.zip`에 생성됩니다.
+`test:browser`는 먼저 `npm run build`로 만든 Chrome/Edge ZIP을 실제로 압축 해제한 뒤 headless Chromium에 로드해 수동 감지, MAIN-world hook, 네트워크 승격, URL 마스킹, 위조 후보의 무권한 fetch를 검증합니다.
 
 ## Firefox 업데이트 채널
 
@@ -84,22 +88,24 @@ open-video-catcher@solitude0429.github.io
 https://solitude0429.github.io/open-video-catcher/updates.json
 ```
 
-AMO unlisted signing과 GitHub Pages 업데이트 배포는 `.github/workflows/sign-firefox.yml`에서 처리합니다. AMO 계정 등록과 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` repository secrets 추가는 사용자가 직접 해야 합니다.
+AMO unlisted signing과 GitHub Pages 업데이트 배포는 `.github/workflows/sign-firefox.yml`에서 처리합니다. 빌드, digest 검증, AMO signing, 공개 채널 조립, Pages 배포는 별도 job이며 AMO 자격 증명은 승인 보호가 적용된 `amo-signing` environment secret으로만 둡니다. 상세 절차는 `docs/AMO_SIGNING.md`를 따릅니다.
 
 ## 권한 설명
 
 - `activeTab`: 사용자가 확장 아이콘/팝업을 연 현재 탭에 수동 감지 스크립트를 주입
 - `scripting`: **감지 시작**을 누른 순간에만 content/page hook 스크립트 주입
 - `webRequest`: 감지 창이 열린 현재 탭에서 로드되는 미디어/playlist 요청 감지. 요청/응답 URL과 MIME/크기/파일명 헤더를 확장 내부 목록에만 사용합니다.
-- `downloads`: 사용자가 직접 누른 일반 HTTP(S) 비디오/오디오 파일 저장
+- `downloads`: 사용자가 위험 안내 확인창에 동의한 일반 HTTP(S) 비디오/오디오 파일 저장. 완료·중단 후 다운로드 기록의 URL은 가능한 경우 즉시 지웁니다.
 - `tabs`: 현재 활성 탭 확인 및 해당 탭의 감지 목록 표시
 - `<all_urls>`: 여러 사이트의 CDN/미디어 도메인까지 감지하는 범용 다운로더라 필요합니다. 특정 사이트 전용으로 줄이고 싶다면 `manifest.json`의 `host_permissions`를 해당 도메인으로 바꾸면 됩니다.
-- `web_accessible_resources`: 페이지 컨텍스트의 `fetch`/`XHR`를 관찰하는 `page/page-hook.js`를 주입하기 위해 필요합니다.
 
 ## 데이터 처리
 
 - Firefox manifest의 `data_collection_permissions.required`는 `none`입니다.
 - 쿠키 권한, debugger 권한, request rewriting 권한은 사용하지 않습니다.
-- 감지된 URL은 외부 서버로 보내지 않고 현재 브라우저 확장 메모리 안에서만 팝업 표시/다운로드/복사에 사용합니다.
+- 감지된 URL은 외부 서버로 보내지 않습니다. 활성 캡처를 MV3 worker 재시작 후에도 이어가기 위해 현재 탭의 제한된 항목을 `storage.session`에 임시 저장하며, 전체 직렬화 상태는 512 KiB로 제한됩니다. 저장 실패 시 빈 상태로 재기록해 기존 전체 URL을 지우려고 시도합니다.
 - URL 수집은 사용자가 **감지 시작**을 누른 현재 탭의 감지 창 동안만 수행합니다.
-- CDN 서명/토큰 쿼리스트링은 화면 표시에서 마스킹하지만, 사용자가 다운로드/복사 버튼을 누를 때 실제 URL은 보존합니다.
+- 캡처 만료 시 전체 URL은 `storage.session`에서 제거됩니다. 현재 worker 메모리의 목록은 사용자가 **목록 지우기**를 누르거나 탭을 닫을 때까지 남을 수 있습니다.
+- CDN 서명/토큰 쿼리스트링은 접힌 화면 표시에서 마스킹하지만, 사용자가 다운로드/복사 버튼을 누를 때 실제 URL은 보존합니다.
+- page/content script가 제시한 URL은 비신뢰 힌트입니다. 같은 탭의 현재 캡처 세대에서 최근 `webRequest`로 실제 관찰된 정확한 URL이 아니면 확장 권한 fetch나 다운로드 대상으로 승격하지 않습니다. 이전 캡처에서 시작된 늦은 fetch 결과도 새 캡처에 합쳐지지 않습니다.
+- 브라우저의 직접 다운로드는 일반 탐색과 마찬가지로 로그인 쿠키를 사용할 수 있고 리디렉션을 따르며 URL이 다운로드 기록에 남을 수 있으므로 매번 확인을 요구합니다. 확장은 완료·중단 이벤트를 받으면 해당 기록을 best-effort로 삭제하지만 브라우저 또는 정책이 거부하면 남을 수 있습니다.

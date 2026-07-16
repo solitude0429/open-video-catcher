@@ -1,16 +1,26 @@
 {
   "name": "open-video-catcher",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "description": "CocoCut-like WebExtension for detecting and downloading accessible page media.",
   "type": "commonjs",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22.22.3"
+  },
   "scripts": {
     "validate:manifest": "node scripts/validate-manifest.js",
-    "lint": "node --check background/service-worker.js && node --check content/content-script.js && node --check page/page-hook.js && node --check popup/popup.js && node --check src/media-utils.js && node --check scripts/generate-update-manifest.js && node --check scripts/validate-manifest.js && node --check scripts/package-extension.js",
-    "lint:webext": "npx --yes web-ext@latest lint --source-dir dist/build/firefox --self-hosted --warnings-as-errors",
+    "lint": "node --check background/core.js && node --check background/service-worker.js && node --check content/content-core.js && node --check content/content-script.js && node --check page/page-hook.js && node --check popup/popup.js && node --check src/media-utils.js && node --check scripts/generate-update-manifest.js && node --check scripts/package-extension.js && node --check scripts/validate-manifest.js && node --check scripts/verify-release.js && node --check tests/browser-smoke.js",
+    "lint:webext": "web-ext lint --source-dir dist/build/firefox --self-hosted --warnings-as-errors",
     "test": "node --test tests/*.test.js",
+    "test:browser": "node tests/browser-smoke.js",
     "build": "npm run validate:manifest && npm run lint && npm test && node scripts/package-extension.js",
     "verify": "npm run build && npm run lint:webext && npm audit --audit-level=moderate"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "fflate": "0.8.3",
+    "playwright-core": "1.61.1",
+    "web-ext": "10.5.0",
+    "yaml": "2.9.0"
+  }
 }

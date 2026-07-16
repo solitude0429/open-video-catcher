@@ -35,7 +35,8 @@
     ["audio/aac", "aac"], ["audio/ogg", "ogg"], ["audio/wav", "wav"],
     ["audio/flac", "flac"], ["application/vnd.apple.mpegurl", "m3u8"],
     ["application/x-mpegurl", "m3u8"], ["audio/mpegurl", "m3u8"],
-    ["application/dash+xml", "mpd"]
+    ["application/dash+xml", "mpd"], ["video/mp2t", "ts"],
+    ["video/iso.segment", "m4s"], ["audio/iso.segment", "m4s"]
   ]);
 
   const SAFE_NAME_FALLBACK = "media";
@@ -94,13 +95,17 @@
     const filenameStar = text.match(/filename\*\s*=\s*([^;]+)/i);
     if (filenameStar) {
       const raw = filenameStar[1].trim().replace(/^"|"$/g, "");
-      const match = raw.match(/^(?:[A-Za-z0-9_-]+)?''(.+)$/);
-      const encoded = match ? match[1] : raw;
+      const match = raw.match(/^([^']*)'([^']*)'(.*)$/);
+      const encoded = match ? match[3] : raw;
       try { return decodeURIComponent(encoded); } catch (_error) { return encoded; }
     }
     const filename = text.match(/filename\s*=\s*("(?:[^"\\]|\\.)*"|[^;]+)/i);
     if (!filename) return "";
-    return filename[1].trim().replace(/^"|"$/g, "").replace(/\"/g, '"');
+    const raw = filename[1].trim();
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      return raw.slice(1, -1).replace(/\\(.)/g, "$1");
+    }
+    return raw;
   }
 
   function preferredExtensionForMime(mime, urlExt, mimeKind) {
@@ -131,6 +136,7 @@
   function kindFromMime(mime) {
     if (mime === "application/vnd.apple.mpegurl" || mime === "application/x-mpegurl" || mime === "audio/mpegurl") return "hls-playlist";
     if (mime === "application/dash+xml") return "dash-manifest";
+    if (mime === "video/mp2t" || mime === "video/iso.segment" || mime === "audio/iso.segment") return "stream-segment";
     if (mime.startsWith("video/")) return "video";
     if (mime.startsWith("audio/")) return "audio";
     return "";
@@ -189,25 +195,46 @@
 
     const mime = normalizeMime(opts.mimeType || opts.contentType || "");
     const ext = extensionFromPathname(parsed.pathname);
+    const dispositionExt = extensionFromPathname(filenameFromContentDisposition(opts.contentDisposition).replace(/[?#].*$/, ""));
+    const mimeExt = MIME_EXTENSION_HINTS.get(mime) || "";
+    const evidence = { mimeExt, dispositionExt, urlExt: ext };
+    const finish = (classification) => Object.assign({}, classification, {
+      classificationEvidence: evidence,
+      classificationConflict: new Set(Object.values(evidence).filter((value) => extensionKind(value))).size > 1
+    });
 
     if (mime) {
       const mimeKind = kindFromMime(mime);
       if (mimeKind) {
-        return { kind: mimeKind, ext: preferredExtensionForMime(mime, ext, mimeKind), mimeType: mime, protocol: parsed.protocol };
+        const dispositionKind = extensionKind(dispositionExt);
+        const urlKind = extensionKind(ext);
+        const explicitSegmentExt = dispositionKind === "stream-segment" ? dispositionExt : (urlKind === "stream-segment" ? ext : "");
+        if (explicitSegmentExt && (mimeKind === "video" || mimeKind === "audio")) {
+          return finish({ kind: "stream-segment", ext: explicitSegmentExt, mimeType: mime, protocol: parsed.protocol });
+        }
+        const selectedExt = mimeExt
+          || (dispositionKind === mimeKind ? dispositionExt : "")
+          || (urlKind === mimeKind ? ext : "")
+          || preferredExtensionForMime(mime, ext, mimeKind);
+        return finish({ kind: mimeKind, ext: selectedExt, mimeType: mime, protocol: parsed.protocol });
       }
     }
 
-    if (PLAYLIST_EXTENSIONS.has(ext)) return { kind: PLAYLIST_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
-    if (DIRECT_MEDIA_EXTENSIONS.has(ext)) return { kind: DIRECT_MEDIA_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
-    if (SEGMENT_EXTENSIONS.has(ext)) return { kind: SEGMENT_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol };
+    if (PLAYLIST_EXTENSIONS.has(dispositionExt)) return finish({ kind: PLAYLIST_EXTENSIONS.get(dispositionExt), ext: dispositionExt, mimeType: mime, protocol: parsed.protocol });
+    if (DIRECT_MEDIA_EXTENSIONS.has(dispositionExt)) return finish({ kind: DIRECT_MEDIA_EXTENSIONS.get(dispositionExt), ext: dispositionExt, mimeType: mime, protocol: parsed.protocol });
+    if (SEGMENT_EXTENSIONS.has(dispositionExt)) return finish({ kind: SEGMENT_EXTENSIONS.get(dispositionExt), ext: dispositionExt, mimeType: mime, protocol: parsed.protocol });
+
+    if (PLAYLIST_EXTENSIONS.has(ext)) return finish({ kind: PLAYLIST_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol });
+    if (DIRECT_MEDIA_EXTENSIONS.has(ext)) return finish({ kind: DIRECT_MEDIA_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol });
+    if (SEGMENT_EXTENSIONS.has(ext)) return finish({ kind: SEGMENT_EXTENSIONS.get(ext), ext, mimeType: mime, protocol: parsed.protocol });
 
     const sniffed = sniffMediaInfo(parsed.href, opts);
-    if (sniffed) return { kind: sniffed.kind, ext: sniffed.ext, mimeType: sniffed.mimeType, protocol: parsed.protocol };
+    if (sniffed) return finish({ kind: sniffed.kind, ext: sniffed.ext, mimeType: sniffed.mimeType, protocol: parsed.protocol });
 
-    if (parsed.protocol === "blob:" && opts.fromDom) return { kind: "blob-media", ext: "", mimeType: mime, protocol: parsed.protocol };
+    if (parsed.protocol === "blob:" && opts.fromDom) return finish({ kind: "blob-media", ext: "", mimeType: mime, protocol: parsed.protocol });
 
     if ((opts.requestType === "media" || opts.requestType === "video" || opts.requestType === "audio") && isNetworkProtocol(parsed.protocol)) {
-      return { kind: mime.startsWith("audio/") ? "audio" : "video", ext: ext || MIME_EXTENSION_HINTS.get(mime) || "", mimeType: mime, protocol: parsed.protocol };
+      return finish({ kind: mime.startsWith("audio/") ? "audio" : "video", ext: mimeExt || dispositionExt || ext, mimeType: mime, protocol: parsed.protocol });
     }
 
     return null;
@@ -317,14 +344,23 @@
     if (variant.resolution) parts.push(variant.resolution);
     if (variant.frameRate) parts.push(`${variant.frameRate}fps`);
     if (variant.bandwidth) parts.push(humanBitrate(variant.bandwidth));
-    return parts.join(" · ") || variant.url || "variant";
+    return parts.join(" · ") || "variant";
   }
 
   function parseHlsPlaylist(text, playlistUrl) {
-    const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.trim());
+    const MAX_HLS_LINES = 20000;
+    const MAX_HLS_VARIANTS = 100;
+    const MAX_HLS_MEDIA = 100;
+    const MAX_HLS_SEGMENTS = 100;
+    const allLines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/);
+    const lines = allLines.slice(0, MAX_HLS_LINES).map((line) => line.trim());
     const variants = [];
     const media = [];
     const segments = [];
+    let variantCount = 0;
+    let mediaCount = 0;
+    let segmentCount = 0;
+    let totalDuration = 0;
     let encrypted = false;
     let encryptionMethods = [];
     let pendingStreamInf = null;
@@ -346,13 +382,16 @@
           codecs: pendingStreamInf.CODECS || ""
         };
         variant.qualityLabel = qualityLabelForVariant(variant);
-        variants.push(variant);
+        variantCount += 1;
+        if (variants.length < MAX_HLS_VARIANTS) variants.push(variant);
         pendingStreamInf = null;
         continue;
       }
       if (pendingExtinf && !line.startsWith("#")) {
         const url = resolveUrl(line, playlistUrl);
-        segments.push({ url, displayUrl: redactUrl(url), duration: pendingExtinf.duration, title: pendingExtinf.title });
+        segmentCount += 1;
+        totalDuration += pendingExtinf.duration || 0;
+        if (segments.length < MAX_HLS_SEGMENTS) segments.push({ url, displayUrl: redactUrl(url), duration: pendingExtinf.duration, title: pendingExtinf.title });
         pendingExtinf = null;
         continue;
       }
@@ -360,7 +399,8 @@
         isMaster = true;
         pendingStreamInf = parseAttributeList(line.slice("#EXT-X-STREAM-INF:".length));
       } else if (line.startsWith("#EXT-X-MEDIA:")) {
-        media.push(parseAttributeList(line.slice("#EXT-X-MEDIA:".length)));
+        mediaCount += 1;
+        if (media.length < MAX_HLS_MEDIA) media.push(parseAttributeList(line.slice("#EXT-X-MEDIA:".length)));
       } else if (line.startsWith("#EXT-X-KEY:")) {
         const attrs = parseAttributeList(line.slice("#EXT-X-KEY:".length));
         const method = String(attrs.METHOD || "").toUpperCase();
@@ -380,17 +420,17 @@
       }
     }
 
-    const totalDuration = segments.reduce((sum, segment) => sum + (segment.duration || 0), 0);
     return {
       type: "hls",
       isMaster,
       encrypted,
       encryptionMethods,
       targetDuration,
-      variantCount: variants.length,
-      segmentCount: segments.length,
+      variantCount,
+      segmentCount,
       totalDuration,
-      mediaCount: media.length,
+      mediaCount,
+      truncated: allLines.length > MAX_HLS_LINES || variantCount > variants.length || mediaCount > media.length || segmentCount > segments.length,
       variants,
       media,
       sampleSegments: segments.slice(0, 5)
@@ -436,7 +476,7 @@
     const fileName = guessFilename(url, classification, data.pageTitle || data.label || data.qualityLabel, data.contentDisposition);
 
     return {
-      id: hashString(`${url}|${classification.kind}`),
+      id: `${classification.kind}|${url}`,
       url,
       displayUrl: redactUrl(url),
       pageUrl: data.pageUrl ? redactUrl(data.pageUrl) : "",
@@ -461,55 +501,134 @@
       parentPlaylistUrl: data.parentPlaylistUrl ? redactUrl(data.parentPlaylistUrl) : "",
       encrypted: Boolean(data.encrypted),
       analysis: data.analysis || null,
+      lowConfidence: Boolean(data.lowConfidence),
+      classificationConflict: Boolean(classification.classificationConflict),
+      classificationEvidence: classification.classificationEvidence || { mimeExt: "", dispositionExt: "", urlExt: "" },
       firstSeen: now,
       lastSeen: now,
-      count: 1
+      detectionCount: Number.isFinite(Number(data.detectionCount)) ? Math.max(0, Number(data.detectionCount)) : 1,
+      enrichmentCount: Number.isFinite(Number(data.enrichmentCount)) ? Math.max(0, Number(data.enrichmentCount)) : 0,
+      count: Number.isFinite(Number(data.detectionCount)) ? Math.max(0, Number(data.detectionCount)) : 1
     };
   }
 
-  function mergeMediaItems(existing, incoming) {
+  function mergeMediaItems(existing, incoming, options = {}) {
     if (!existing) return Object.assign({}, incoming);
+    const existingDetections = Number(existing.detectionCount ?? existing.count ?? 1) || 0;
+    const incomingDetections = Number(incoming.detectionCount ?? incoming.count ?? 1) || 0;
+    const existingEnrichments = Number(existing.enrichmentCount || 0) || 0;
+    const incomingEnrichments = Number(incoming.enrichmentCount || 0) || 0;
+    const detectionCount = options.enrichment ? existingDetections : existingDetections + incomingDetections;
+    const enrichmentCount = options.enrichment ? existingEnrichments + 1 : existingEnrichments + incomingEnrichments;
     const merged = Object.assign({}, existing, incoming, {
       firstSeen: Math.min(existing.firstSeen || incoming.firstSeen, incoming.firstSeen || existing.firstSeen),
       lastSeen: Math.max(existing.lastSeen || incoming.lastSeen, incoming.lastSeen || existing.lastSeen),
-      count: (existing.count || 1) + 1
+      detectionCount,
+      enrichmentCount,
+      count: detectionCount
     });
     if (existing.source && incoming.source && existing.source !== incoming.source && !existing.source.includes(incoming.source)) merged.source = `${existing.source}+${incoming.source}`;
-    for (const key of ["size", "sizeText", "qualityLabel", "bandwidth", "averageBandwidth", "resolution", "frameRate", "codecs", "parentPlaylistUrl", "analysis"]) {
+    const strength = (item) => {
+      const evidence = item?.classificationEvidence || {};
+      return (evidence.mimeExt ? 8 : 0) + (evidence.dispositionExt ? 4 : 0) + (evidence.urlExt ? 2 : 0) + (item?.mimeType ? 1 : 0);
+    };
+    if (strength(incoming) < strength(existing)) {
+      for (const key of ["kind", "ext", "mimeType", "fileName", "downloadable", "classificationConflict", "classificationEvidence"]) merged[key] = existing[key];
+    }
+    for (const key of ["ext", "mimeType", "fileName", "size", "sizeText", "qualityLabel", "bandwidth", "averageBandwidth", "resolution", "frameRate", "codecs", "parentPlaylistUrl", "analysis", "classificationEvidence"]) {
       if ((incoming[key] === undefined || incoming[key] === "" || incoming[key] === 0 || incoming[key] === null) && existing[key]) merged[key] = existing[key];
     }
+    if (!incoming.classificationConflict && existing.classificationConflict) merged.classificationConflict = true;
     return merged;
   }
 
   function kindLabel(kind) {
     const labels = {
-      video: "Video", audio: "Audio", "hls-playlist": "HLS playlist",
-      "dash-manifest": "DASH manifest", "stream-segment": "Stream segment", "blob-media": "Blob media"
+      video: "비디오",
+      audio: "오디오",
+      "hls-playlist": "HLS 재생목록",
+      "dash-manifest": "DASH 매니페스트",
+      "stream-segment": "스트리밍 조각",
+      "blob-media": "Blob 미디어"
     };
-    return labels[kind] || "Media";
+    return labels[kind] || "미분류 후보";
   }
 
   function quoteForShell(value) {
     return `"${String(value || "").replace(/(["\\$`])/g, "\\$1")}"`;
   }
 
+  function quoteForPowerShell(value) {
+    return `'${String(value || "").replace(/'/g, "''")}'`;
+  }
+
   function withOutputExtension(filename, ext) {
-    const base = String(filename || `media.${ext}`).replace(/\.(m3u8|mpd|txt|html?)$/i, `.${ext}`);
-    return base.toLowerCase().endsWith(`.${ext}`) ? safeFilename(base, `media.${ext}`) : safeFilename(`${base}.${ext}`, `media.${ext}`);
+    const base = safeFilename(filename || `media.${ext}`, `media.${ext}`);
+    return safeFilename(replaceOrAppendExtension(base, ext), `media.${ext}`);
   }
 
-  function ffmpegCommand(url, filename) {
-    const safeOutput = withOutputExtension(filename, "mp4");
-    return `ffmpeg -hide_banner -nostdin -i ${quoteForShell(url)} -c copy ${quoteForShell(safeOutput)}`;
+  function codecsSupportMp4(codecs) {
+    const values = String(codecs || "").toLowerCase().split(",").map((value) => value.trim()).filter(Boolean);
+    if (values.length === 0) return false;
+    return values.every((value) => /^(avc1|avc3|hvc1|hev1|av01|mp4a|ac-3|ec-3)/.test(value));
   }
 
-  function curlCommand(url, filename) {
-    return `curl -L --fail --output ${quoteForShell(safeFilename(filename || guessFilename(url), "media.bin"))} ${quoteForShell(url)}`;
+  function ffmpegPlan(input, filenameOrOptions, maybeOptions) {
+    const item = typeof input === "object" && input !== null
+      ? Object.assign({}, input)
+      : Object.assign({ url: String(input || ""), fileName: String(filenameOrOptions || "") }, classifyMediaUrl(String(input || "")) || {});
+    const options = typeof input === "object" && input !== null ? (filenameOrOptions || {}) : (maybeOptions || {});
+    const quote = options.shell === "powershell" ? quoteForPowerShell : quoteForShell;
+    const isPlaylist = item.kind === "hls-playlist" || item.kind === "dash-manifest";
+    let outputExt = String(item.ext || extensionFromUrl(item.url) || "").toLowerCase();
+    let mapArgs = "-map 0";
+    let warning = "";
+
+    if (isPlaylist) {
+      if (codecsSupportMp4(item.codecs)) {
+        outputExt = "mp4";
+        mapArgs = `-map ${quote("0:v?")} -map ${quote("0:a?")}`;
+        warning = "MP4 was selected from codec evidence; subtitle and data streams are intentionally omitted.";
+      } else {
+        outputExt = "mkv";
+        warning = item.codecs
+          ? "Matroska (MKV) is used because the observed codecs are not a conservative MP4 stream-copy match."
+          : "Codec evidence is missing; Matroska (MKV) is the safer stream-copy container.";
+      }
+    } else if (!DIRECT_MEDIA_EXTENSIONS.has(outputExt)) {
+      outputExt = item.kind === "audio" ? "mka" : "mkv";
+      warning = "The original direct-media container is unknown; a Matroska-family output is used for stream copy.";
+    } else {
+      warning = "Direct files are usually better saved with the browser download or curl; ffmpeg preserves the original container.";
+    }
+
+    const outputFile = withOutputExtension(item.fileName || guessFilename(item.url), outputExt);
+    const command = `ffmpeg -hide_banner -nostdin -i ${quote(item.url)} ${mapArgs} -c copy ${quote(outputFile)}`;
+    return {
+      command,
+      container: outputExt,
+      outputFile,
+      shell: options.shell === "powershell" ? "powershell" : "posix",
+      streamCopy: true,
+      warning
+    };
   }
 
-  function ytDlpCommand(url, filename) {
+  function ffmpegCommand(input, filenameOrOptions, maybeOptions) {
+    return ffmpegPlan(input, filenameOrOptions, maybeOptions).command;
+  }
+
+  function curlCommand(url, filename, options = {}) {
+    const powershell = options.shell === "powershell";
+    const quote = powershell ? quoteForPowerShell : quoteForShell;
+    const executable = powershell ? "curl.exe" : "curl";
+    return `${executable} -L --fail --output ${quote(safeFilename(filename || guessFilename(url), "media.bin"))} ${quote(url)}`;
+  }
+
+  function ytDlpCommand(url, filename, options = {}) {
+    const quote = options.shell === "powershell" ? quoteForPowerShell : quoteForShell;
     const output = safeFilename(String(filename || "%(title)s.%(ext)s").replace(/\.(m3u8|mpd)$/i, ".%(ext)s"), "%(title)s.%(ext)s");
-    return `yt-dlp --no-warnings -o ${quoteForShell(output)} ${quoteForShell(url)}`;
+    return `yt-dlp --no-warnings -o ${quote(output)} ${quote(url)}`;
   }
 
   function displayQuality(item) {
@@ -530,6 +649,7 @@
     extensionFromUrl,
     filenameFromContentDisposition,
     ffmpegCommand,
+    ffmpegPlan,
     formatBytes,
     guessFilename,
     hashString,

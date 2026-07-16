@@ -6,18 +6,69 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "windows-latest"]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run verify
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: extension-zips
+          name: extension-zips-${{ matrix.os }}
           path: dist/open-video-catcher-*.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  compare-packages:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: extension-zips-ubuntu-latest
+          path: packages/ubuntu
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: extension-zips-windows-latest
+          path: packages/windows
+      - name: Require byte-identical cross-platform archives
+        run: |
+          cmp packages/ubuntu/open-video-catcher-chrome-edge.zip packages/windows/open-video-catcher-chrome-edge.zip
+          cmp packages/ubuntu/open-video-catcher-firefox.zip packages/windows/open-video-catcher-firefox.zip
+
+  browser-smoke:
+    needs: compare-packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: extension-zips-ubuntu-latest
+          path: dist
+      - run: npx --no-install playwright-core install --with-deps chromium
+      - run: npm run test:browser
