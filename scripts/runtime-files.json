@@ -1,0 +1,20 @@
+[
+  "LICENSE",
+  "NOTICE",
+  "background/core.js",
+  "background/service-worker.js",
+  "content/content-core.js",
+  "content/content-script.js",
+  "icons/icon-128.png",
+  "icons/icon-16.png",
+  "icons/icon-32.png",
+  "icons/icon-48.png",
+  "icons/icon-96.png",
+  "icons/icon.svg",
+  "manifest.json",
+  "page/page-hook.js",
+  "popup/popup.css",
+  "popup/popup.html",
+  "popup/popup.js",
+  "src/media-utils.js"
+]

@@ -29,7 +29,9 @@ assert(!manifest.permissions.includes("debugger"), "debugger permission is inten
 assert(!manifest.permissions.includes("declarativeNetRequest"), "static request rewriting is intentionally not used");
 assert(manifest.permissions.includes("downloads"), "downloads permission is required");
 assert(manifest.permissions.includes("activeTab"), "activeTab permission is required for click-initiated active-tab detection");
+assert(manifest.permissions.includes("alarms"), "alarms permission is required for capture expiry cleanup");
 assert(manifest.permissions.includes("scripting"), "scripting permission is required for click-initiated content script injection");
+assert(manifest.permissions.includes("storage"), "storage permission is required for session-backed service worker state");
 assert(manifest.permissions.includes("webRequest"), "webRequest permission is required for media detection");
 assert(!manifest.content_scripts, "content_scripts must not auto-run; detection is click-initiated only");
 assert(Array.isArray(manifest.host_permissions), "host_permissions must be an array");
@@ -55,8 +57,12 @@ for (const script of manifest.content_scripts || []) {
   assert(script.js?.[0] === "src/media-utils.js", "content script must load shared utilities first");
 }
 
+mustExist(manifest.background.service_worker);
+mustExist("background/core.js");
+mustExist("content/content-core.js");
+
 const resources = manifest.web_accessible_resources || [];
-assert(resources.some((entry) => (entry.resources || []).includes("page/page-hook.js")), "page/page-hook.js must be web-accessible for page-world fetch/XHR hooks");
+assert(!resources.some((entry) => (entry.resources || []).includes("page/page-hook.js")), "page/page-hook.js must only be injected with scripting.executeScript in MAIN world");
 
 function scanForRemoteScripts(filePath) {
   const text = fs.readFileSync(filePath, "utf8");

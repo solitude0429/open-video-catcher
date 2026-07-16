@@ -7,6 +7,7 @@
   const refreshButton = document.getElementById("refreshButton");
   const clearButton = document.getElementById("clearButton");
   const hideSegments = document.getElementById("hideSegments");
+  const commandShell = document.getElementById("commandShell");
   const template = document.getElementById("itemTemplate");
   const notice = document.querySelector(".notice");
   let activeTab = null;
@@ -16,16 +17,18 @@
   let diagnostics = null;
   let statusMessage = "감지 시작을 누르면 현재 탭을 일정 시간만 감지합니다.";
 
+  const extensionApi = globalThis.browser || globalThis.chrome;
+  const apiMode = globalThis.browser ? "promise" : "callback";
+
   function extensionApiCall(promiseInvoke, callbackInvoke, timeoutMs = 3000) {
     return new Promise((resolve) => {
       let settled = false;
-      let callbackAttempted = false;
       let timer = 0;
       const finish = (result) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
-        const error = chrome.runtime.lastError;
+        const error = apiMode === "callback" ? extensionApi.runtime.lastError : null;
         if (error) resolve({ ok: false, error: error.message });
         else resolve({ ok: true, result });
       };
@@ -35,49 +38,39 @@
         if (timer) clearTimeout(timer);
         resolve({ ok: false, error: error?.message || String(error) });
       };
-      const tryCallback = (cause) => {
-        if (settled || callbackAttempted || typeof callbackInvoke !== "function") {
-          if (cause) fail(cause);
+
+      if (timeoutMs > 0) timer = setTimeout(() => fail(new Error("브라우저 확장 API 응답 시간이 초과되었습니다.")), timeoutMs);
+      try {
+        if (apiMode === "callback") {
+          callbackInvoke(finish);
           return;
         }
-        callbackAttempted = true;
-        try {
-          const result = callbackInvoke(finish);
-          if (result && typeof result.then === "function") result.then(finish, fail);
-          else if (result !== undefined) finish(result);
-        } catch (error) {
-          fail(cause || error);
-        }
-      };
-
-      try {
         const result = promiseInvoke();
-        if (result && typeof result.then === "function") result.then(finish, (error) => tryCallback(error));
-        else if (result !== undefined) finish(result);
-        else tryCallback();
+        if (result && typeof result.then === "function") result.then(finish, fail);
+        else finish(result);
       } catch (error) {
-        tryCallback(error);
-      }
-
-      if (timeoutMs > 0) {
-        timer = setTimeout(() => fail(new Error("브라우저 확장 API 응답 시간이 초과되었습니다.")), timeoutMs);
+        fail(error);
       }
     });
   }
 
   async function getActiveTab() {
     const response = await extensionApiCall(
-      () => chrome.tabs.query({ active: true, currentWindow: true }),
-      (done) => chrome.tabs.query({ active: true, currentWindow: true }, done)
+      () => extensionApi.tabs.query({ active: true, currentWindow: true }),
+      (done) => extensionApi.tabs.query({ active: true, currentWindow: true }, done)
     );
     if (!response.ok) throw new Error(response.error);
     return response.result[0];
   }
 
   function sendRuntimeMessage(message) {
+    const timeoutMs = message?.type === "OVC_DOWNLOAD" ? 130000
+      : message?.type === "OVC_ANALYZE_PLAYLIST" ? 45000
+        : message?.type === "OVC_START_DETECTION" ? 15000 : 5000;
     return extensionApiCall(
-      () => chrome.runtime.sendMessage(message),
-      (done) => chrome.runtime.sendMessage(message, done)
+      () => extensionApi.runtime.sendMessage(message),
+      (done) => extensionApi.runtime.sendMessage(message, done),
+      timeoutMs
     );
   }
 
@@ -147,7 +140,7 @@
     if (!diagnostics) return "";
     const lines = [];
     const host = diagnostics.hostPermissionGranted === true ? "허용" : diagnostics.hostPermissionGranted === false ? "미허용" : "확인불가";
-    lines.push(`진단: site access=${host}, content=${diagnostics.contentInjectionOk ? "ok" : "fail"}/${diagnostics.contentFrames || 0}, main hook=${diagnostics.mainWorldHookOk ? "ok" : "fail"}/${diagnostics.mainWorldHookFrames || 0}, fallback hook=${diagnostics.contentFallbackHookOk ? "ok" : "fail"}`);
+    lines.push(`진단: site access=${host}, content=${diagnostics.contentInjectionOk ? "ok" : "fail"}/${diagnostics.contentFrames || 0}, main hook=${diagnostics.mainWorldHookOk ? "ok" : "fail"}/${diagnostics.mainWorldHookFrames || 0}`);
     lines.push(`후보: page ${diagnostics.pageCandidatesSeen || 0}개→${diagnostics.pageCandidatesRecorded || 0}개, network ${diagnostics.networkSeen || 0}개→${diagnostics.networkRecorded || 0}개, 제외 ${(diagnostics.networkDiscarded || 0) + (diagnostics.pageCandidatesDiscarded || 0)}개, sniff ${diagnostics.sniffAttempts || 0}개→${diagnostics.sniffRecorded || 0}개`);
     if (diagnostics.warning) lines.push(`경고: ${diagnostics.warning}`);
     if (diagnostics.hostPermissionGranted === false) {
@@ -214,13 +207,18 @@
         item.mimeType,
         item.sizeText,
         item.requestType,
-        item.count > 1 ? `${item.count}회 감지` : ""
+        item.detectionCount > 1 ? `${item.detectionCount}회 감지` : "",
+        item.enrichmentCount > 0 ? `${item.enrichmentCount}회 분석 갱신` : "",
+        item.classificationConflict ? "분류 신호 충돌" : ""
       ].filter(Boolean).join(" · ");
       node.querySelector(".meta").textContent = meta || "metadata 없음";
       node.querySelector(".url").textContent = item.displayUrl || "";
       node.querySelector(".analysis").textContent = analysisText(item);
 
-      const hint = hintForItem(item);
+      const hint = [
+        item.classificationConflict ? "MIME·파일명·URL 확장자의 분류 신호가 서로 다릅니다. 다운로드 전에 형식을 확인하세요." : "",
+        hintForItem(item)
+      ].filter(Boolean).join(" ");
       const hintNode = node.querySelector(".hint");
       hintNode.textContent = hint;
       hintNode.hidden = !hint;
@@ -231,6 +229,7 @@
       downloadButton.textContent = canBrowserDownload ? "파일 다운로드" : (item.kind === "hls-playlist" || item.kind === "dash-manifest" ? "명령 사용" : "다운로드 불가");
       downloadButton.addEventListener("click", async () => {
         if (!canBrowserDownload) return;
+        if (!window.confirm("브라우저 다운로드는 로그인 쿠키를 사용할 수 있고 리디렉션을 따르며 다운로드 기록에 URL이 남을 수 있습니다. 계속하시겠습니까?")) return;
         downloadButton.disabled = true;
         downloadButton.textContent = "요청 중…";
         const response = await sendRuntimeMessage({ type: "OVC_DOWNLOAD", tabId: activeTab.id, id: item.id });
@@ -259,6 +258,16 @@
         analyzeButton.textContent = "분석 중…";
         const response = await sendRuntimeMessage({ type: "OVC_ANALYZE_PLAYLIST", tabId: activeTab.id, id: item.id });
         const payload = response.result || response;
+        if (!response.ok || !payload.ok) {
+          analyzeButton.textContent = "분석 실패";
+          hintNode.textContent = `분석 실패: ${payload.error || response.error || "알 수 없는 오류"}`;
+          hintNode.hidden = false;
+          window.setTimeout(() => {
+            analyzeButton.textContent = "playlist 분석";
+            analyzeButton.disabled = false;
+          }, 2200);
+          return;
+        }
         if (payload.items) currentItems = payload.items;
         render();
       });
@@ -267,15 +276,20 @@
 
       const ffmpegButton = node.querySelector(".copyFfmpeg");
       ffmpegButton.hidden = !(item.kind === "hls-playlist" || item.kind === "dash-manifest" || item.kind === "video" || item.kind === "audio");
-      ffmpegButton.addEventListener("click", (event) => copyText(event.currentTarget, utils.ffmpegCommand(item.url, item.fileName), "ffmpeg"));
+      const initialFfmpegPlan = utils.ffmpegPlan(item, { shell: commandShell.value });
+      ffmpegButton.title = initialFfmpegPlan.warning;
+      ffmpegButton.addEventListener("click", (event) => {
+        const plan = utils.ffmpegPlan(item, { shell: commandShell.value });
+        return copyText(event.currentTarget, plan.command, "ffmpeg");
+      });
 
       const curlButton = node.querySelector(".copyCurl");
       curlButton.hidden = item.protocol === "blob:";
-      curlButton.addEventListener("click", (event) => copyText(event.currentTarget, utils.curlCommand(item.url, item.fileName), "curl"));
+      curlButton.addEventListener("click", (event) => copyText(event.currentTarget, utils.curlCommand(item.url, item.fileName, { shell: commandShell.value }), "curl"));
 
       const ytdlpButton = node.querySelector(".copyYtdlp");
       ytdlpButton.hidden = item.protocol === "blob:";
-      ytdlpButton.addEventListener("click", (event) => copyText(event.currentTarget, utils.ytDlpCommand(commandUrl(item, false), item.fileName), "yt-dlp"));
+      ytdlpButton.addEventListener("click", (event) => copyText(event.currentTarget, utils.ytDlpCommand(commandUrl(item, false), item.fileName, { shell: commandShell.value }), "yt-dlp"));
 
       content.append(node);
     }
@@ -285,7 +299,12 @@
     if (!activeTab?.id) return;
     const response = await sendRuntimeMessage({ type: "OVC_GET_TAB_MEDIA", tabId: activeTab.id });
     const payload = response.result || response;
-    currentItems = payload.ok ? payload.items || [] : [];
+    if (!response.ok || !payload.ok) {
+      statusMessage = `목록 조회 실패: ${payload.error || response.error || "알 수 없는 오류"}`;
+      updateNotice();
+      return;
+    }
+    currentItems = payload.items || [];
     diagnostics = payload.diagnostics || null;
     captureUntil = payload.captureUntil || 0;
     captureActive = Boolean(payload.captureActive);
@@ -321,7 +340,13 @@
   refreshButton.addEventListener("click", startDetection);
   clearButton.addEventListener("click", async () => {
     if (!activeTab?.id) return;
-    await sendRuntimeMessage({ type: "OVC_CLEAR_TAB", tabId: activeTab.id });
+    const response = await sendRuntimeMessage({ type: "OVC_CLEAR_TAB", tabId: activeTab.id });
+    const payload = response.result || response;
+    if (!response.ok || !payload.ok) {
+      statusMessage = `목록 삭제 실패: ${payload.error || response.error || "알 수 없는 오류"}`;
+      updateNotice();
+      return;
+    }
     currentItems = [];
     diagnostics = null;
     captureUntil = 0;
@@ -330,15 +355,16 @@
     render();
   });
   hideSegments.addEventListener("change", render);
+  commandShell.addEventListener("change", render);
 
-  chrome.runtime.onMessage.addListener((message) => {
+  extensionApi.runtime.onMessage.addListener((message) => {
     if (message?.type === "OVC_TAB_MEDIA_UPDATED" && message.tabId === activeTab?.id) {
       loadItems();
     }
   });
 
   window.setInterval(() => {
-    if (captureUntil) render();
+    if (captureUntil) updateNotice();
   }, 1000);
 
   async function init() {
