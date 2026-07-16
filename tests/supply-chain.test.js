@@ -92,6 +92,7 @@ test("tag releases verify version, attest checksums, and publish without rebuild
   assert.match(attestText, /subject-checksums/);
   assert.deepEqual(workflow.jobs.publish.permissions, { contents: "write" });
   assert.match(publishText, /sha256sum -c/);
+  assert.match(publishText, /GH_REPO.*github\.repository/);
   assert.doesNotMatch(publishText, /actions\/checkout|actions\/setup-node|npm\s+(ci|install)|npx/);
 });
 
