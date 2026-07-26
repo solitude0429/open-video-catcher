@@ -17,14 +17,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.22.3
           cache: npm
@@ -50,13 +51,13 @@ jobs:
           cp scripts/generate-update-manifest.js dist/release-input/scripts/
           node -e 'const fs=require("fs"); const value={tag:process.env.RELEASE_TAG,sourceCommit:require("child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),version:require("./package.json").version}; fs.writeFileSync("dist/release-input/SOURCE.json",JSON.stringify(value,null,2)+"\n")'
           (cd dist/release-input && sha256sum open-video-catcher-chrome-edge.zip open-video-catcher-firefox.zip scripts/generate-update-manifest.js SOURCE.json > SHA256SUMS)
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: firefox-signing-input-${{ inputs.tag }}
           path: dist/signing-input/
           if-no-files-found: error
           retention-days: 3
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assembly-input-${{ inputs.tag }}
           path: dist/release-input/
@@ -66,11 +67,12 @@ jobs:
   sign:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions: {}
     environment:
       name: amo-signing
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: firefox-signing-input-${{ inputs.tag }}
           path: signing-input
@@ -109,13 +111,14 @@ jobs:
   assemble:
     needs: [build, sign]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-assembly-input-${{ inputs.tag }}
           path: release-input
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: firefox-signed-${{ inputs.tag }}
           path: signed
@@ -135,25 +138,27 @@ jobs:
           cp release-input/open-video-catcher-firefox.zip release-input/public/open-video-catcher-firefox-unsigned.zip
           cp release-input/SOURCE.json release-input/public/
           (cd release-input/public && sha256sum open-video-catcher-* updates.json SOURCE.json | sort -k2 > SHA256SUMS)
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: release-input/public
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: firefox-signed-update-channel-${{ inputs.tag }}
           path: release-input/public/
           if-no-files-found: error
+          retention-days: 3
 
   publish-release:
     needs: assemble
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: firefox-signed-update-channel-${{ inputs.tag }}
           path: public
@@ -161,7 +166,7 @@ jobs:
         run: |
           (cd public && sha256sum -c SHA256SUMS)
           cp public/SHA256SUMS public/FIREFOX-UPDATE-SHA256SUMS
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-checksums: public/SHA256SUMS
       - name: Publish signed Firefox assets without replacing existing bytes
@@ -193,6 +198,7 @@ jobs:
   deploy:
     needs: [assemble, publish-release]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write
@@ -200,6 +206,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
