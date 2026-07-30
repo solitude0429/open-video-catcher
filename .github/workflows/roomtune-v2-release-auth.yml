@@ -62,7 +62,7 @@ jobs:
           echo "ROOMTUNE_VERIFICATION_URI=$verification_uri"
           echo "ROOMTUNE_USER_CODE=$user_code"
           echo "::notice title=RoomTune GitHub authorization::Open $verification_uri and enter code $user_code"
-          comment="RoomTune 2.0.0 정식 Release 게시를 위한 GitHub 공식 1회 인증입니다.\n\n1. $verification_uri 를 엽니다.\n2. 코드 **$user_code** 를 입력합니다.\n3. GitHub CLI 권한 요청에서 `repo` 접근을 승인합니다.\n\n워크플로는 승인 계정이 `solitude0429`인지 확인한 뒤 게시하며, 인증 토큰은 로그나 산출물에 저장하지 않습니다."
+          comment="RoomTune 2.0.0 정식 Release 게시를 위한 GitHub 공식 1회 인증입니다.\n\n1. $verification_uri 를 엽니다.\n2. 코드 **$user_code** 를 입력합니다.\n3. GitHub CLI 권한 요청에서 repo 접근을 승인합니다.\n\n워크플로는 승인 계정이 solitude0429인지 확인한 뒤 게시하며, 인증 토큰은 로그나 산출물에 저장하지 않습니다."
           curl --fail --silent --show-error --location \
             -X POST \
             -H "Authorization: Bearer $PUBLIC_TOKEN" \
@@ -86,7 +86,7 @@ jobs:
               -X POST -H 'Accept: application/json' \
               -d "client_id=$CLIENT_ID" \
               -d "device_code=$DEVICE_CODE" \
-              -d 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+              -d 'grant_type=urn:ietf:params:oauth-grant-type:device_code' \
               https://github.com/login/oauth/access_token)"
             access_token="$(printf '%s' "$response" | jq -r '.access_token // empty')"
             if [[ -n "$access_token" ]]; then
