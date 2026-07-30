@@ -1,0 +1,298 @@
+name: Trusted transactional RoomTune Enterprise 2.0.0 publisher
+
+'on':
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: trusted-roomtune-v2.0.0-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository_owner == 'solitude0429' &&
+      github.actor == 'solitude0429' &&
+      github.event.issue.user.login == 'solitude0429' &&
+      github.event.issue.title == '[temporary] Publish RoomTune Enterprise 2.0.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_REPOSITORY: solitude0429/RoomTune
+      API_ROOT: https://api.github.com
+      CLIENT_ID: 178c6fc778ccc68e1d6a
+      RELEASE_TAG: v2.0.0
+      TARGET_COMMIT: 85027533c20ea0da2a1be6bb80d59e3e9e0ee4d9
+      VALIDATED_COMMIT: 5b4337e5adb8a590c7160382bcb8be3e7c5b3e71
+      VALIDATED_RUN_ID: '30537556174'
+      PORTABLE_ARTIFACT_ID: '8757355826'
+      QUALITY_ARTIFACT_ID: '8757320216'
+      DSP_ARTIFACT_ID: '8757303743'
+      PORTABLE_ARTIFACT_DIGEST: 293ff4cb9fd097c18f3124eac8e0956d3dc10184eb2d91f06ad09bb5fb28fe26
+      QUALITY_ARTIFACT_DIGEST: 81944378eed67bbc181a43b9420a3f3b4ec4f93b44072c285b376840e0c189fe
+      DSP_ARTIFACT_DIGEST: bd1a54854d8b72439800a8f471b8c8bec9289982efd2472491aaae97e580309e
+      PORTABLE_SHA256: 4dd5b8d38822ce9182567388acad29ea64365628578f398d4528fddbfcdbe39b
+      PRIVATE_RELEASE_ISSUE: '8'
+      PRIVATE_RELEASE_PR: '10'
+    steps:
+      - name: Request owner authorization
+        id: device
+        shell: bash
+        env:
+          PUBLIC_TOKEN: ${{ github.token }}
+          PUBLIC_ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error -X POST -H 'Accept: application/json' \
+            -d "client_id=$CLIENT_ID" -d 'scope=repo' https://github.com/login/device/code)"
+          device_code="$(printf '%s' "$response" | jq -r '.device_code')"
+          user_code="$(printf '%s' "$response" | jq -r '.user_code')"
+          verification_uri="$(printf '%s' "$response" | jq -r '.verification_uri')"
+          interval="$(printf '%s' "$response" | jq -r '.interval // 5')"
+          test -n "$device_code" -a "$device_code" != null
+          test -n "$user_code" -a "$user_code" != null
+          echo "device_code=$device_code" >> "$GITHUB_OUTPUT"
+          echo "interval=$interval" >> "$GITHUB_OUTPUT"
+          echo "ROOMTUNE_VERIFICATION_URI=$verification_uri"
+          echo "ROOMTUNE_USER_CODE=$user_code"
+          message="RoomTune Enterprise 2.0.0 정식 Release 게시용 GitHub 공식 1회 인증입니다.\n\n1. $verification_uri 를 엽니다.\n2. 코드 **$user_code** 를 입력합니다.\n3. GitHub CLI의 repo 접근을 승인합니다.\n\n신뢰된 main 브랜치만 토큰을 처리하며, 승인 계정이 solitude0429인지 확인합니다. 토큰은 로그나 산출물에 저장되지 않습니다."
+          curl --fail --silent --show-error --location -X POST \
+            -H "Authorization: Bearer $PUBLIC_TOKEN" -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$API_ROOT/repos/$GITHUB_REPOSITORY/issues/$PUBLIC_ISSUE_NUMBER/comments" \
+            --data "$(jq -n --arg body "$message" '{body:$body}')" >/dev/null
+
+      - name: Wait for authorization
+        id: token
+        shell: bash
+        env:
+          DEVICE_CODE: ${{ steps.device.outputs.device_code }}
+          INTERVAL: ${{ steps.device.outputs.interval }}
+        run: |
+          set -euo pipefail
+          interval="$INTERVAL"; access_token=''
+          for _ in $(seq 1 240); do
+            response="$(curl --fail --silent --show-error -X POST -H 'Accept: application/json' \
+              -d "client_id=$CLIENT_ID" -d "device_code=$DEVICE_CODE" \
+              -d 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+              https://github.com/login/oauth/access_token)"
+            access_token="$(printf '%s' "$response" | jq -r '.access_token // empty')"
+            if [[ -n "$access_token" ]]; then
+              echo "::add-mask::$access_token"
+              echo "access_token=$access_token" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            error="$(printf '%s' "$response" | jq -r '.error // empty')"
+            case "$error" in
+              authorization_pending) sleep "$interval" ;;
+              slow_down) interval=$((interval + 5)); sleep "$interval" ;;
+              access_denied|expired_token) echo "Authorization failed: $error" >&2; exit 1 ;;
+              *) echo "Unexpected authorization response: $error" >&2; exit 1 ;;
+            esac
+          done
+          test -n "$access_token" || { echo 'Authorization timed out.' >&2; exit 1; }
+
+      - name: Verify owner, validated jobs, and immutable artifacts
+        shell: bash
+        env:
+          USER_TOKEN: ${{ steps.token.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          for tool in curl jq unzip sha256sum stat; do command -v "$tool" >/dev/null; done
+          auth=(-H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          login="$(curl --fail --silent --show-error --location "${auth[@]}" "$API_ROOT/user" | jq -r '.login')"
+          test "$login" = solitude0429
+
+          jobs="$(curl --fail --silent --show-error --location "${auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/actions/runs/$VALIDATED_RUN_ID/jobs?per_page=100&filter=latest")"
+          required_jobs=(
+            'Coverage, types, security and dependency audit'
+            'Deterministic DSP, stress and recovery'
+            'Native Windows x64 portable package'
+            'ubuntu-latest / Python 3.10'
+            'ubuntu-latest / Python 3.12'
+            'ubuntu-latest / Python 3.13'
+            'windows-latest / Python 3.10'
+            'windows-latest / Python 3.12'
+            'windows-latest / Python 3.13'
+          )
+          for name in "${required_jobs[@]}"; do
+            printf '%s' "$jobs" | jq -e --arg name "$name" 'any(.jobs[]; .name==$name and .conclusion=="success")' >/dev/null
+          done
+
+          mkdir -p stage/portable-artifact stage/portable release downloaded
+          artifact() {
+            local id="$1" expected_name="$2" expected_digest="$3" output="$4" metadata
+            metadata="$(curl --fail --silent --show-error --location "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/actions/artifacts/$id")"
+            test "$(printf '%s' "$metadata" | jq -r '.name')" = "$expected_name"
+            test "$(printf '%s' "$metadata" | jq -r '.expired')" = false
+            test "$(printf '%s' "$metadata" | jq -r '.workflow_run.id')" = "$VALIDATED_RUN_ID"
+            test "$(printf '%s' "$metadata" | jq -r '.workflow_run.head_sha')" = "$VALIDATED_COMMIT"
+            test "$(printf '%s' "$metadata" | jq -r '.digest')" = "sha256:$expected_digest"
+            curl --fail --silent --show-error --location "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/actions/artifacts/$id/zip" --output "$output"
+            echo "$expected_digest  $output" | sha256sum --check -
+          }
+          artifact "$PORTABLE_ARTIFACT_ID" roomtune-stable-portable-windows-x64 "$PORTABLE_ARTIFACT_DIGEST" stage/portable-artifact.zip
+          artifact "$QUALITY_ARTIFACT_ID" stable-quality-evidence "$QUALITY_ARTIFACT_DIGEST" release/RoomTune_Enterprise_2.0.0_Quality_Evidence.zip
+          artifact "$DSP_ARTIFACT_ID" stable-dsp-evidence "$DSP_ARTIFACT_DIGEST" release/RoomTune_Enterprise_2.0.0_DSP_Evidence.zip
+
+      - name: Assemble and checksum release files
+        shell: bash
+        env:
+          USER_TOKEN: ${{ steps.token.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          unzip -q stage/portable-artifact.zip -d stage/portable-artifact
+          portable="$(find stage/portable-artifact -type f -name 'RoomTune_Enterprise_2.0.0_Portable_Windows_x64.zip' -print -quit)"
+          test -n "$portable"
+          cp "$portable" release/RoomTune_Enterprise_2.0.0_Portable_Windows_x64.zip
+          echo "$PORTABLE_SHA256  release/RoomTune_Enterprise_2.0.0_Portable_Windows_x64.zip" | sha256sum --check -
+          unzip -tq release/RoomTune_Enterprise_2.0.0_Portable_Windows_x64.zip
+          unzip -q release/RoomTune_Enterprise_2.0.0_Portable_Windows_x64.zip -d stage/portable
+          wheel="$(find stage/portable -type f -name 'roomtune_fieldcontrol-2.0.0-py3-none-any.whl' -print -quit)"
+          test -n "$wheel"
+          cp "$wheel" release/roomtune_fieldcontrol-2.0.0-py3-none-any.whl
+          unzip -tq release/roomtune_fieldcontrol-2.0.0-py3-none-any.whl
+          curl --fail --silent --show-error --location "${auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/zipball/$TARGET_COMMIT" \
+            --output release/RoomTune_Enterprise_2.0.0_Source.zip
+          unzip -tq release/RoomTune_Enterprise_2.0.0_Source.zip
+
+          jq -n --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg source_commit "$TARGET_COMMIT" --arg validated_commit "$VALIDATED_COMMIT" \
+            --argjson ci_run_id "$VALIDATED_RUN_ID" \
+            '{schema_version:1,product:"RoomTune Enterprise",version:"2.0.0",release_channel:"stable",generated_at:$generated_at,source_commit:$source_commit,validated_commit:$validated_commit,validated_ci_run:$ci_run_id,artifact_ids:{portable:8757355826,quality_evidence:8757320216,dsp_evidence:8757303743}}' \
+            > release/BUILD_PROVENANCE.json
+          cat > release/RELEASE_NOTES.md <<'EOF'
+          # RoomTune Enterprise 2.0.0
+
+          First stable software release for the documented Windows 10/11 x64, WASAPI, 48 kHz, wired 2–16 output reference profile. Each physical installation must pass channel verification and hardware qualification before filter deployment.
+
+          Assets are assembled from immutable source commit `85027533c20ea0da2a1be6bb80d59e3e9e0ee4d9` and the successful required jobs of validation run `30537556174`. Artifact metadata, artifact digests, the portable package, embedded wheel, source archive, and every final SHA-256 are verified before the draft release is made public.
+
+          RoomTune is independent from Dirac Research and does not claim Dirac ART algorithm or performance equivalence. The Windows executable is not Authenticode-signed.
+          EOF
+          (
+            cd release
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort | while read -r file; do sha256sum "$file"; done > SHA256SUMS.txt
+            sha256sum --check SHA256SUMS.txt
+          )
+
+      - name: Validate tag and prepare draft release
+        id: draft
+        shell: bash
+        env:
+          USER_TOKEN: ${{ steps.token.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          tag_status="$(curl --silent --show-error --location -o stage/tag.json -w '%{http_code}' "${auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          if [[ "$tag_status" == 404 ]]; then
+            curl --fail --silent --show-error --location -X POST "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/git/refs" \
+              --data "$(jq -n --arg ref "refs/tags/$RELEASE_TAG" --arg sha "$TARGET_COMMIT" '{ref:$ref,sha:$sha}')" > stage/tag.json
+          elif [[ "$tag_status" == 200 ]]; then
+            object_type="$(jq -r '.object.type' stage/tag.json)"; object_sha="$(jq -r '.object.sha' stage/tag.json)"
+            if [[ "$object_type" == tag ]]; then
+              tag_object="$(curl --fail --silent --show-error --location "${auth[@]}" "$API_ROOT/repos/$TARGET_REPOSITORY/git/tags/$object_sha")"
+              object_type="$(printf '%s' "$tag_object" | jq -r '.object.type')"; object_sha="$(printf '%s' "$tag_object" | jq -r '.object.sha')"
+            fi
+            test "$object_type" = commit
+            test "$object_sha" = "$TARGET_COMMIT"
+          else
+            cat stage/tag.json; exit 1
+          fi
+
+          status="$(curl --silent --show-error --location -o stage/current-release.json -w '%{http_code}' "${auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          if [[ "$status" == 404 ]]; then
+            payload="$(jq -n --arg tag "$RELEASE_TAG" --arg target "$TARGET_COMMIT" \
+              --arg name 'RoomTune Enterprise 2.0.0' --arg body "$(cat release/RELEASE_NOTES.md)" \
+              '{tag_name:$tag,target_commitish:$target,name:$name,body:$body,draft:true,prerelease:false,make_latest:"false"}')"
+            curl --fail --silent --show-error --location -X POST "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/releases" --data "$payload" > stage/release.json
+          elif [[ "$status" == 200 ]]; then
+            cp stage/current-release.json stage/release.json
+            release_id="$(jq -r '.id' stage/release.json)"
+            curl --fail --silent --show-error --location -X PATCH "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/releases/$release_id" \
+              --data '{"draft":true,"prerelease":false,"make_latest":"false"}' > stage/release.json
+            curl --fail --silent --show-error --location "${auth[@]}" \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/releases/$release_id/assets?per_page=100" | jq -r '.[].id' \
+              | while read -r asset_id; do
+                  [[ -n "$asset_id" ]] && curl --fail --silent --show-error --location -X DELETE "${auth[@]}" \
+                    "$API_ROOT/repos/$TARGET_REPOSITORY/releases/assets/$asset_id" >/dev/null
+                done
+          else
+            cat stage/current-release.json; exit 1
+          fi
+          echo "release_id=$(jq -r '.id' stage/release.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload and independently verify draft assets
+        shell: bash
+        env:
+          USER_TOKEN: ${{ steps.token.outputs.access_token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          for file in release/*; do
+            name="$(basename "$file")"; encoded="$(jq -rn --arg value "$name" '$value|@uri')"
+            curl --fail --silent --show-error --location -X POST \
+              -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/octet-stream' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://uploads.github.com/repos/$TARGET_REPOSITORY/releases/$RELEASE_ID/assets?name=$encoded" \
+              --data-binary "@$file" >/dev/null
+          done
+          assets="$(curl --fail --silent --show-error --location "${auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100")"
+          test "$(printf '%s' "$assets" | jq 'length')" -eq "$(find release -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          printf '%s' "$assets" | jq -r '.[]|[.id,.name]|@tsv' | while IFS=$'\t' read -r asset_id name; do
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/octet-stream' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$API_ROOT/repos/$TARGET_REPOSITORY/releases/assets/$asset_id" --output "downloaded/$name"
+          done
+          (cd downloaded && sha256sum --check SHA256SUMS.txt)
+
+      - name: Publish verified release and close audit items
+        id: publish
+        shell: bash
+        env:
+          USER_TOKEN: ${{ steps.token.outputs.access_token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          PUBLIC_TOKEN: ${{ github.token }}
+          PUBLIC_ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          private_auth=(-H "Authorization: Bearer $USER_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          public_auth=(-H "Authorization: Bearer $PUBLIC_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          payload="$(jq -n --arg name 'RoomTune Enterprise 2.0.0' --arg body "$(cat release/RELEASE_NOTES.md)" \
+            '{name:$name,body:$body,draft:false,prerelease:false,make_latest:"true"}')"
+          final="$(curl --fail --silent --show-error --location -X PATCH "${private_auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/releases/$RELEASE_ID" --data "$payload")"
+          test "$(printf '%s' "$final" | jq -r '.draft')" = false
+          test "$(printf '%s' "$final" | jq -r '.prerelease')" = false
+          url="$(printf '%s' "$final" | jq -r '.html_url')"
+          message="RoomTune Enterprise 2.0.0 stable Release published and independently re-download verified.\n\n- Release: $url\n- Source: $TARGET_COMMIT\n- Required validation jobs: passed\n- Artifact provenance and digests: passed\n- Draft asset verification: passed\n- Draft: false\n- Prerelease: false\n- SHA-256: every asset passed"
+          curl --fail --silent --show-error --location -X POST "${private_auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/issues/$PRIVATE_RELEASE_ISSUE/comments" --data "$(jq -n --arg body "$message" '{body:$body}')" >/dev/null
+          curl --fail --silent --show-error --location -X PATCH "${private_auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/issues/$PRIVATE_RELEASE_ISSUE" --data '{"state":"closed","state_reason":"completed"}' >/dev/null
+          curl --fail --silent --show-error --location -X POST "${private_auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/issues/$PRIVATE_RELEASE_PR/comments" --data "$(jq -n --arg body "$message" '{body:$body}')" >/dev/null
+          curl --fail --silent --show-error --location -X PATCH "${private_auth[@]}" \
+            "$API_ROOT/repos/$TARGET_REPOSITORY/pulls/$PRIVATE_RELEASE_PR" --data '{"state":"closed"}' >/dev/null
+          curl --fail --silent --show-error --location -X POST "${public_auth[@]}" \
+            "$API_ROOT/repos/$GITHUB_REPOSITORY/issues/$PUBLIC_ISSUE_NUMBER/comments" --data "$(jq -n --arg body "$message" '{body:$body}')" >/dev/null
+          curl --fail --silent --show-error --location -X PATCH "${public_auth[@]}" \
+            "$API_ROOT/repos/$GITHUB_REPOSITORY/issues/$PUBLIC_ISSUE_NUMBER" --data '{"state":"closed","state_reason":"completed"}' >/dev/null
+          echo "ROOMTUNE_RELEASE_URL=$url"
